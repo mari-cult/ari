@@ -1,28 +1,14 @@
 use {
-    base64::{engine::general_purpose::STANDARD, Engine},
-    image::{codecs::jpeg::JpegEncoder, imageops},
     llama::{Model, Session, SessionBatch},
     std::{
-        collections::hash_map::{self, DefaultHasher, HashMap},
+        collections::hash_map::HashMap,
         env,
-        hash::{Hash, Hasher},
-        io, slice,
         sync::{Arc, Mutex},
-        time::{Duration, Instant},
+        time::Instant,
     },
-    tracing::{debug, info, warn},
     twilight_cache_inmemory::InMemoryCache,
     twilight_gateway::{Event, Intents, ShardId},
-    twilight_model::{
-        channel::message::{
-            embed::{Embed},
-            Message,
-        },
-        id::{
-            marker::{ChannelMarker, MessageMarker},
-            Id,
-        },
-    },
+    twilight_model::channel::message::Message,
     twilight_util::builder::embed::{EmbedBuilder, EmbedFooterBuilder},
 };
 
@@ -32,6 +18,7 @@ pub struct Clyde {
     gateway: twilight_gateway::Shard,
     rest: twilight_http::Client,
     session: Session,
+    tokens: Vec<i32>,
     url_cache: Arc<Mutex<HashMap<u16, String>>>,
 }
 
@@ -72,12 +59,22 @@ impl Clyde {
             ),
             rest: twilight_http::Client::new(token),
             session,
+            tokens,
             url_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub async fn process_message(&mut self, message: &Message) -> anyhow::Result<()> {
-        let Some(clyde) = self.cache.current_user() else {
+        let Self {
+            batch,
+            cache,
+            session,
+            tokens,
+            rest,
+            ..
+        } = self;
+
+        let Some(clyde) = cache.current_user() else {
             return Ok(());
         };
 
@@ -99,237 +96,82 @@ impl Clyde {
             return Ok(());
         }
 
-        let mut tokens = Vec::new();
-        let model = self.session.model();
-
+        let model = session.model();
         let content = format!(
-            "{}: {}",
+            "{}:{}",
             message.author.name.as_str(),
             message.content.trim()
         );
 
-        model.tokenize_special("<|im_start|>user\n", &mut tokens);
-        model.tokenize(&content, &mut tokens);
-        model.tokenize_special("<|im_end|>\n<|im_start|>assistant\nClyde:", &mut tokens);
-
-        for token in tokens.iter().copied() {
-            let mut bytes = Vec::new();
-
-            self.session.model().detokenize(Some(token), &mut bytes);
-
-            info!(target: "inference", "prompt: {token} -> {:?}", String::from_utf8_lossy(&bytes));
-        }
-
-        self.batch.extend(tokens.iter().copied(), false);
         tokens.clear();
+        model.tokenize_special("<|im_start|>user\n", tokens);
+        model.tokenize(&content, tokens);
+        model.tokenize_special("<|im_end|>\n<|im_start|>assistant\nClyde:", tokens);
+        batch.extend(tokens.drain(..), false);
 
-        if let Some(logit) = self.batch.logits_mut().last_mut() {
+        if let Some(logit) = batch.logits_mut().last_mut() {
             *logit = true;
         }
 
-        let mut then = Instant::now();
-        let mut reply_id = None;
+        let start = Instant::now();
 
         loop {
-            self.session.decode(&mut self.batch);
+            session.decode(batch);
 
-            let token = self.session.sample();
-            let mut bytes = Vec::new();
+            let token = session.sample();
 
-            self.session.model().detokenize(Some(token), &mut bytes);
-
-            info!(target: "inference", "sampler: {token} -> {:?}", String::from_utf8_lossy(&bytes));
-
-            self.session.accept(token);
-            self.batch.clear();
-            self.batch.push(token, true);
+            session.accept(token);
+            batch.clear();
+            batch.push(token, true);
             tokens.push(token);
 
-            if token == self.session.model().eos_token() {
+            if token == session.model().eos_token() {
                 break;
-            }
-
-            let now = Instant::now();
-            let elapsed = now.duration_since(then);
-
-            if elapsed > Duration::from_secs(1) {
-                let mut bytes = Vec::new();
-
-                then = now;
-
-                self.session
-                    .model()
-                    .detokenize(tokens.iter().copied(), &mut bytes);
-
-                let string = String::from_utf8_lossy(&bytes);
-
-                info!(target: "inference", "message: {string:?} ({} tokens)", tokens.len());
-
-                if !self
-                    .message(message.channel_id, &mut reply_id, &string, true)
-                    .await
-                {
-                    break;
-                }
             }
         }
 
+        let elapsed = Instant::now().duration_since(start);
         let mut bytes = Vec::new();
 
-        self.session
+        session
             .model()
             .detokenize(tokens.iter().copied(), &mut bytes);
 
-        let string = String::from_utf8_lossy(&bytes);
+        let content = String::from_utf8_lossy(&bytes);
+        let content = content
+            .trim()
+            .trim_matches(|character: char| (character as u32) < 32);
 
-        self.message(message.channel_id, &mut reply_id, &string, false)
-            .await;
+        let content = content.strip_prefix("assistant\n").unwrap_or(&content);
+        let content = content.strip_prefix("Clyde:").unwrap_or(&content);
 
-        info!(target: "inference", "done: {string:?} ({} tokens)", tokens.len());
+        let content = content
+            .strip_prefix("clyde:")
+            .unwrap_or(&content)
+            .trim()
+            .trim_matches(|character: char| (character as u32) < 32);
+
+        tracing::info!("content={content:?}");
+
+        if content.is_empty() {
+            return Ok(());
+        }
+
+        let embed = EmbedBuilder::new()
+            .footer(EmbedFooterBuilder::new(format!(
+                "{:?} tokens in {:.2?} ({:.2?} t/s)",
+                tokens.len(),
+                elapsed,
+                (tokens.len() as f32) / elapsed.as_secs_f32(),
+            )))
+            .build();
+
+        rest.create_message(message.channel_id)
+            .content(&content)?
+            .embeds(&[embed])?
+            .await?;
 
         Ok(())
-    }
-
-    pub async fn message(
-        &self,
-        channel_id: Id<ChannelMarker>,
-        message_id: &mut Option<Id<MessageMarker>>,
-        content: &str,
-        generating: bool,
-    ) -> bool {
-        match message_id {
-            Some(message_id) => !self
-                .update_message(channel_id, *message_id, &content, generating)
-                .await
-                .is_none(),
-            None => {
-                *message_id = self
-                    .create_message(channel_id, &content, generating)
-                    .await
-                    .map(|message| message.id);
-
-                true
-            }
-        }
-    }
-
-    pub async fn create_message(
-        &self,
-        channel_id: Id<ChannelMarker>,
-        content: &str,
-        generating: bool,
-    ) -> Option<Message> {
-        let content = content.trim();
-
-        if content.is_empty() {
-            warn!("Cannot send an empty message.");
-
-            return None;
-        }
-
-        let result = self.rest.create_message(channel_id).content(content);
-
-        let result = match result {
-            Ok(future) => {
-                if let Some(embed) = embed(generating) {
-                    future.embeds(&[embed]).unwrap().await
-                } else {
-                    future.await
-                }
-            }
-            Err(error) => {
-                warn!("Cannot send a message with invalid content: {error}");
-
-                return None;
-            }
-        };
-
-        let result = match result {
-            Ok(response) => response.model().await,
-            Err(error) => {
-                warn!("Failed to parse create message response: {error}");
-
-                return None;
-            }
-        };
-
-        match result {
-            Ok(message) => Some(message),
-            Err(error) => {
-                warn!("Failed to deserialize create message response as a message: {error}");
-
-                None
-            }
-        }
-    }
-
-    pub async fn update_message(
-        &self,
-        channel_id: Id<ChannelMarker>,
-        message_id: Id<MessageMarker>,
-        content: &str,
-        generating: bool,
-    ) -> Option<Message> {
-        let content = content.trim();
-
-        if content.is_empty() {
-            warn!("Cannot update a message to have no content.");
-
-            return None;
-        }
-
-        let embed = embed(generating);
-        let result = self
-            .rest
-            .update_message(channel_id, message_id)
-            .embeds(embed.as_ref().map(slice::from_ref))
-            .unwrap()
-            .content(Some(content));
-
-        let result = match result {
-            Ok(future) => future.await,
-            Err(error) => {
-                warn!("Cannot update a message with invalid content: {error}");
-
-                return None;
-            }
-        };
-
-        let result = match result {
-            Ok(response) => response.model().await,
-            Err(error) => {
-                warn!("Failed to parse update message response: {error}");
-
-                return None;
-            }
-        };
-
-        match result {
-            Ok(message) => Some(message),
-            Err(error) => {
-                warn!("Failed to deserialize update message response as a message: {error}");
-
-                None
-            }
-        }
-    }
-
-    pub async fn url(&self, url: &str) -> anyhow::Result<(u16, String)> {
-        let mut hasher = DefaultHasher::new();
-
-        url.hash(&mut hasher);
-
-        let id = (hasher.finish() % u16::MAX as u64) as u16;
-
-        match self.url_cache.lock().unwrap().entry(id) {
-            hash_map::Entry::Occupied(entry) => Ok((id, entry.get().clone())),
-            hash_map::Entry::Vacant(entry) => {
-                let bytes = reqwest::get(url).await?.bytes().await?;
-                let base64 = process_image(&bytes)?;
-
-                Ok((id, entry.insert(base64).clone()))
-            }
-        }
     }
 
     pub async fn run(mut self) -> anyhow::Result<()> {
@@ -349,59 +191,6 @@ impl Clyde {
             }
         }
     }
-}
-
-fn embed(generating: bool) -> Option<Embed> {
-    let footer = if generating { "Generating..." } else { "Done" };
-
-    let embed = EmbedBuilder::new()
-        .footer(EmbedFooterBuilder::new(footer))
-        .build();
-
-    Some(embed)
-}
-
-/// Process an image.
-///
-/// - Load image data from `bytes`.
-/// - Resize to 512x512, maintaining aspect ratio.
-/// - Quantize colour data.
-/// - Encode as a JPEG with 65% quality.
-/// - Encode as base64.
-fn process_image(bytes: &[u8]) -> anyhow::Result<String> {
-    debug!("Attempt to parse {} bytes as an image", bytes.len());
-
-    let image = image::load_from_memory(bytes)?;
-
-    debug!("Resize to 256x256");
-
-    let image = image.resize(256, 256, imageops::Triangle);
-
-    debug!("Ensure 8-bit RGBA");
-
-    let mut image = image.into_rgba8();
-
-    debug!("Build NEUQUANT color map");
-
-    let color_map = color_quant::NeuQuant::new(30, 128, image.as_raw());
-
-    debug!("Apply dithering");
-
-    imageops::dither(&mut image, &color_map);
-
-    debug!("Encode as JPEG with 65% quality.");
-
-    let mut jpeg = io::Cursor::new(Vec::new());
-
-    image.write_with_encoder(JpegEncoder::new_with_quality(&mut jpeg, 60))?;
-
-    debug!("Encode as base64");
-
-    let mut base64 = String::new();
-
-    STANDARD.encode_string(&jpeg.into_inner(), &mut base64);
-
-    Ok(base64)
 }
 
 #[tokio::main]

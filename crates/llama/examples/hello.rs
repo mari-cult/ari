@@ -20,6 +20,7 @@ fn main() {
     model.tokenize_special("<|im_end|>\n", &mut tokens);
 
     let mut session = Session::options()
+        .set_context_len(32768)
         .set_temperature(0.3)
         .set_top_k(50.0)
         .set_top_p(0.95)
@@ -42,42 +43,47 @@ fn main() {
         tokens.clear();
         model.tokenize_special("<|im_start|>user\n", &mut tokens);
         model.tokenize(&line, &mut tokens);
-        model.tokenize_special("<|im_end|>\n<|im_start|>assistant\n", &mut tokens);
-
-        for token in tokens.iter().copied() {
-            let mut string = String::new();
-
-            session.model().detokenize(&[token], &mut string);
-
-            println!("{token} -> {string:?}");
-        }
-
+        model.tokenize_special("<|im_end|>\n<|im_start|>assistant", &mut tokens);
         batch.extend(tokens.iter().copied(), false);
 
         if let Some(logit) = batch.logits_mut().last_mut() {
             *logit = true;
         }
 
+        tokens.clear();
+
         loop {
             session.decode(&mut batch);
 
             let token = session.sample();
-            let mut string = String::new();
-
-            session.model().detokenize(&[token], &mut string);
-
-            stdout.write(string.as_bytes()).unwrap();
-            stdout.flush().unwrap();
-
-            if token == session.model().eos_token() {
-                break;
-            }
 
             session.accept(token);
             batch.clear();
             batch.push(token, true);
+            tokens.push(token);
+
+            if token == session.model().eos_token() {
+                break;
+            }
         }
 
-        writeln!(stdout, "<|done|>").unwrap();
+        let mut bytes = Vec::new();
+
+        session
+            .model()
+            .detokenize(tokens.iter().copied(), &mut bytes);
+
+        let content = String::from_utf8_lossy(&bytes);
+        let content = &*content;
+
+        println!("{content:?}");
+
+        let content = content
+            .trim()
+            .strip_prefix("assistant")
+            .unwrap_or(content)
+            .trim();
+
+        println!("{content:?}");
     }
 }
