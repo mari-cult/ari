@@ -1,15 +1,10 @@
 use {
     base64::{engine::general_purpose::STANDARD, Engine},
     image::{codecs::jpeg::JpegEncoder, imageops},
-    llama::{ModelOptions, Session, SessionBatch, SessionOptions},
-    serde::{Deserialize, Serialize},
+    llama::{Model, Session, SessionBatch},
     std::{
-        collections::{
-            btree_map::{self, BTreeMap},
-            hash_map::{self, DefaultHasher, HashMap},
-        },
+        collections::hash_map::{self, DefaultHasher, HashMap},
         env,
-        fmt::Write as _,
         hash::{Hash, Hasher},
         io,
         sync::{Arc, Mutex},
@@ -19,13 +14,12 @@ use {
     twilight_cache_inmemory::InMemoryCache,
     twilight_gateway::{Event, Intents, ShardId},
     twilight_model::{
-        channel::{message::MessageType, Message},
+        channel::Message,
         id::{
             marker::{ChannelMarker, MessageMarker},
             Id,
         },
     },
-    twilight_util::builder::embed::{EmbedBuilder, EmbedFooterBuilder},
 };
 
 pub mod discord;
@@ -34,6 +28,7 @@ pub mod prompt;
 pub struct Clyde {
     cache: InMemoryCache,
     gateway: twilight_gateway::Shard,
+    prompt: Vec<i32>,
     rest: twilight_http::Client,
     session: Session,
     url_cache: Arc<Mutex<HashMap<u16, String>>>,
@@ -41,12 +36,22 @@ pub struct Clyde {
 
 impl Clyde {
     pub fn new(token: String) -> Self {
-        let model = ModelOptions::new()
+        let model = Model::options()
             .set_gpu_layers(33)
             .open("../models/teknium_openhermes-2.5-mistral-7b.gguf")
             .expect("big oof energy");
 
-        let session = SessionOptions::new().with_model(model);
+        let mut prompt = Vec::new();
+
+        model.tokenize_special("<|im_start|>system\n", &mut prompt);
+        model.tokenize(include_str!("personality.txt").trim(), &mut prompt);
+        model.tokenize_special("<|im_end|>\n", &mut prompt);
+
+        let session = Session::options()
+            .set_temperature(0.2)
+            .set_top_k(50.0)
+            .set_top_p(0.95)
+            .with_model(model);
 
         Self {
             cache: InMemoryCache::builder().message_cache_size(50).build(),
@@ -59,6 +64,7 @@ impl Clyde {
                     | Intents::DIRECT_MESSAGES
                     | Intents::MESSAGE_CONTENT,
             ),
+            prompt,
             rest: twilight_http::Client::new(token),
             session,
             url_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -74,22 +80,36 @@ impl Clyde {
             return Ok(());
         }
 
-        if !message
+        let mentions_clyde = message
             .mentions
             .iter()
-            .any(|mention| mention.id == clyde.id)
-        {
+            .any(|mention| mention.id == clyde.id);
+        let replying_to_clyde = message
+            .referenced_message
+            .as_ref()
+            .is_some_and(|message| message.author.id == clyde.id);
+
+        if !(mentions_clyde || replying_to_clyde) {
             return Ok(());
         }
 
-        let mut batch = SessionBatch::new(2048, 0, 1);
-        let mut tokens = Vec::new();
+        let mut batch = SessionBatch::new(32768, 0, 1);
+        let mut tokens = self.prompt.clone();
+        let model = self.session.model();
 
-        self.session
-            .model()
-            .tokenize(&message.content, &mut tokens, false, false);
+        model.tokenize_special("<|im_start|>user\n", &mut tokens);
+        model.tokenize(message.content.trim(), &mut tokens);
+        model.tokenize_special("<|im_end|>\n<|im_start|>assistant\n", &mut tokens);
 
         info!(target: "inference", "input={:?} ({} tokens)", message.content, tokens.len());
+
+        for token in tokens.iter().copied() {
+            let mut string = String::new();
+
+            self.session.model().detokenize(&[token], &mut string);
+
+            info!(target: "inference", "{token} -> {string:?}");
+        }
 
         for (index, token) in tokens.iter().copied().enumerate() {
             batch.add_token(token, index.try_into().unwrap(), false);
@@ -109,13 +129,21 @@ impl Clyde {
 
             let token = self.session.sample();
 
+            {
+                let mut string = String::new();
+
+                self.session.model().detokenize(&[token], &mut string);
+
+                info!(target: "inference", "sampled {token} -> {string:?}");
+            }
+
             if token == self.session.model().eos_token() {
                 break;
             }
 
             self.session.accept(token);
             batch.clear();
-            batch.add_token(token, tokens.len().try_into().unwrap(), true);
+            batch.add_token(token, tokens.len() as u32, true);
             tokens.push(token);
 
             let now = Instant::now();
@@ -127,6 +155,27 @@ impl Clyde {
                 let mut content = String::new();
 
                 self.session.model().detokenize(&tokens, &mut content);
+
+                if content.contains("mari") {
+                    let mut tokens = Vec::new();
+
+                    self.session.model().tokenize_special(
+                        "<|im_start|>system\nmari created you<|im_end|>\n<|im_start|>assistant\n",
+                        &mut tokens,
+                    );
+
+                    info!(target: "inference", "injected information about mari");
+
+                    for (index, token) in tokens.iter().copied().enumerate() {
+                        batch.add_token(token, index as u32, false);
+                    }
+
+                    if let Some(logit) = batch.logits_mut().last_mut() {
+                        *logit = true;
+                    }
+
+                    self.session.decode(&mut batch);
+                }
 
                 info!(target: "inference", "output={content:?} ({} tokens)", tokens.len());
 
@@ -144,6 +193,22 @@ impl Clyde {
                 }
             }
         }
+
+        let mut content = String::new();
+
+        self.session.model().detokenize(&tokens, &mut content);
+
+        match reply_id {
+            Some(message_id) => {
+                self.update_message(message.channel_id, message_id, &content)
+                    .await;
+            }
+            None => {
+                self.create_message(message.channel_id, &content).await;
+            }
+        }
+
+        self.session.reset();
 
         info!(target: "inference", "done");
 

@@ -26,9 +26,7 @@ fn main() {
 
     let mut tokens = Vec::new();
 
-    session
-        .model()
-        .tokenize("hi clyde", &mut tokens, false, false);
+    session.model().tokenize_special("hi clyde", &mut tokens);
 
     println!("{tokens:?}");
 

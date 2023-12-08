@@ -21,6 +21,86 @@ pub struct SessionBatch {
     pub(crate) capacity: u32,
 }
 
+impl Session {
+    pub fn options() -> SessionOptions {
+        SessionOptions::new()
+    }
+
+    pub fn model(&self) -> &Model {
+        &self.model
+    }
+
+    pub fn into_model(self) -> Model {
+        self.model
+    }
+
+    pub fn decode(&mut self, batch: &mut SessionBatch) {
+        unsafe {
+            sys::bindings_session_decode(
+                self.session_ptr.as_mut_ptr(),
+                batch.batch_ptr.as_mut_ptr(),
+            );
+        }
+    }
+
+    pub fn sample(&mut self) -> i32 {
+        unsafe {
+            sys::bindings_session_sampler_sample(
+                self.sampler_ptr.as_mut_ptr(),
+                self.session_ptr.as_mut_ptr(),
+            )
+        }
+    }
+
+    pub fn accept(&mut self, token: i32) {
+        unsafe {
+            sys::bindings_session_sampler_accept(
+                self.sampler_ptr.as_mut_ptr(),
+                self.session_ptr.as_mut_ptr(),
+                token,
+            );
+        }
+    }
+
+    pub fn reset(&mut self) {
+        unsafe {
+            sys::bindings_session_sampler_reset(self.sampler_ptr.as_mut_ptr());
+        }
+    }
+
+    pub fn infer(&mut self, tokens: &[i32]) -> String {
+        let mut batch = SessionBatch::new(512, 0, 1);
+
+        for (index, token) in tokens.iter().copied().enumerate() {
+            batch.add_token(token, index as u32, false);
+        }
+
+        if let Some(logit) = batch.logits_mut().last_mut() {
+            *logit = true;
+        }
+
+        let mut tokens = Vec::new();
+
+        for i in tokens.len()..100 {
+            self.decode(&mut batch);
+
+            let token = self.sample();
+
+            self.accept(token);
+
+            batch.clear();
+            batch.add_token(token, i as u32, true);
+            tokens.push(token);
+        }
+
+        let mut string = String::new();
+
+        self.model.detokenize(&tokens, &mut string);
+
+        string
+    }
+}
+
 impl SessionBatch {
     pub fn new(token_capacity: u32, embedding_size: u32, max_sequence_ids: u32) -> Self {
         unsafe {
@@ -100,76 +180,6 @@ impl SessionBatch {
     }
 }
 
-impl Session {
-    pub fn model(&self) -> &Model {
-        &self.model
-    }
-
-    pub fn into_model(self) -> Model {
-        self.model
-    }
-
-    pub fn decode(&mut self, batch: &mut SessionBatch) {
-        unsafe {
-            sys::bindings_session_decode(
-                self.session_ptr.as_mut_ptr(),
-                batch.batch_ptr.as_mut_ptr(),
-            );
-        }
-    }
-
-    pub fn sample(&mut self) -> i32 {
-        unsafe {
-            sys::bindings_session_sampler_sample(
-                self.sampler_ptr.as_mut_ptr(),
-                self.session_ptr.as_mut_ptr(),
-            )
-        }
-    }
-
-    pub fn accept(&mut self, token: i32) {
-        unsafe {
-            sys::bindings_session_sampler_accept(
-                self.sampler_ptr.as_mut_ptr(),
-                self.session_ptr.as_mut_ptr(),
-                token,
-            );
-        }
-    }
-
-    pub fn infer(&mut self, tokens: &[i32]) -> String {
-        let mut batch = SessionBatch::new(512, 0, 1);
-
-        for (index, token) in tokens.iter().copied().enumerate() {
-            batch.add_token(token, index as u32, false);
-        }
-
-        if let Some(logit) = batch.logits_mut().last_mut() {
-            *logit = true;
-        }
-
-        let mut tokens = Vec::new();
-
-        for i in tokens.len()..100 {
-            self.decode(&mut batch);
-
-            let token = self.sample();
-
-            self.accept(token);
-
-            batch.clear();
-            batch.add_token(token, i as u32, true);
-            tokens.push(token);
-        }
-
-        let mut string = String::new();
-
-        self.model.detokenize(&tokens, &mut string);
-
-        string
-    }
-}
-
 impl SessionOptions {
     /// Creates a new set of session options ready for configuration.
     pub fn new() -> Self {
@@ -185,6 +195,53 @@ impl SessionOptions {
                 ),
             }
         }
+    }
+
+    pub fn temperature(&self) -> f32 {
+        unsafe {
+            sys::bindings_session_sampler_options_temperature(self.sampler_options_ptr.as_ptr())
+        }
+    }
+
+    pub fn set_temperature(mut self, temperature: f32) -> Self {
+        unsafe {
+            sys::bindings_session_sampler_options_set_temperature(
+                self.sampler_options_ptr.as_mut_ptr(),
+                temperature,
+            );
+        }
+
+        self
+    }
+
+    pub fn top_k(&self) -> f32 {
+        unsafe { sys::bindings_session_sampler_options_top_k(self.sampler_options_ptr.as_ptr()) }
+    }
+
+    pub fn set_top_k(mut self, top_k: f32) -> Self {
+        unsafe {
+            sys::bindings_session_sampler_options_set_top_k(
+                self.sampler_options_ptr.as_mut_ptr(),
+                top_k,
+            );
+        }
+
+        self
+    }
+
+    pub fn top_p(&self) -> f32 {
+        unsafe { sys::bindings_session_sampler_options_top_p(self.sampler_options_ptr.as_ptr()) }
+    }
+
+    pub fn set_top_p(mut self, top_p: f32) -> Self {
+        unsafe {
+            sys::bindings_session_sampler_options_set_top_p(
+                self.sampler_options_ptr.as_mut_ptr(),
+                top_p,
+            );
+        }
+
+        self
     }
 
     /// Creates a session with the specified model.
@@ -214,16 +271,26 @@ impl Default for SessionOptions {
     }
 }
 
-impl fmt::Debug for SessionOptions {
+impl fmt::Debug for Session {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct(any::type_name::<Self>())
             .finish_non_exhaustive()
     }
 }
 
-impl fmt::Debug for Session {
+impl fmt::Debug for SessionBatch {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct(any::type_name::<Self>())
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for SessionOptions {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct(any::type_name::<Self>())
+            .field("temperature", &self.temperature())
+            .field("top_k", &self.top_k())
+            .field("top_p", &self.top_p())
             .finish_non_exhaustive()
     }
 }

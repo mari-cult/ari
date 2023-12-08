@@ -19,6 +19,10 @@ pub struct Model {
 }
 
 impl Model {
+    pub fn options() -> ModelOptions {
+        ModelOptions::new()
+    }
+
     pub fn bos_token(&self) -> i32 {
         unsafe { sys::bindings_model_bos_token(self.model_ptr.as_ptr()) }
     }
@@ -63,52 +67,44 @@ impl Model {
         unsafe { sys::bindings_model_eot_token(self.model_ptr.as_ptr()) }
     }
 
-    unsafe fn tokenize_internal(
-        &self,
-        string: &str,
-        tokens: &mut [MaybeUninit<i32>],
-        add_bos: bool,
-        special: bool,
-    ) -> Result<usize, usize> {
-        let len = sys::bindings_model_tokenize(
-            self.model_ptr.as_ptr(),
-            string.as_ptr().cast(),
-            string.len().try_into().unwrap(),
-            tokens.as_mut_ptr().cast(),
-            tokens.len().try_into().unwrap(),
-            add_bos,
-            special,
-        );
+    fn tokenize_internal(&self, string: &str, tokens: &mut Vec<i32>, special: bool) {
+        loop {
+            let len = unsafe {
+                sys::bindings_model_tokenize(
+                    self.model_ptr.as_ptr(),
+                    string.as_ptr().cast(),
+                    string.len().try_into().unwrap(),
+                    tokens.spare_capacity_mut().as_mut_ptr().cast(),
+                    tokens.spare_capacity_mut().len().try_into().unwrap(),
+                    false,
+                    special,
+                )
+            };
 
-        let is_ok = len > -1;
-        let len = len.unsigned_abs().try_into().unwrap();
+            let is_ok = len > -1;
+            let len = len.unsigned_abs().try_into().unwrap();
 
-        if is_ok {
-            Ok(len)
-        } else {
-            Err(len)
-        }
-    }
-
-    pub fn tokenize(&self, string: &str, tokens: &mut Vec<i32>, add_bos: bool, special: bool) {
-        tokens.clear();
-
-        unsafe {
-            match self.tokenize_internal(string, tokens.spare_capacity_mut(), add_bos, special) {
-                Ok(len) => tokens.set_len(len),
-                Err(len) => {
-                    tokens.reserve(len - tokens.len());
-
-                    self.tokenize_internal(string, tokens.spare_capacity_mut(), add_bos, special)
-                        .unwrap();
-
-                    tokens.set_len(len);
+            if is_ok {
+                unsafe {
+                    tokens.set_len(tokens.len() + len);
                 }
+
+                break;
+            } else {
+                tokens.reserve(len);
             }
         }
     }
 
-    pub unsafe fn detokenize_internal(
+    pub fn tokenize(&self, string: &str, tokens: &mut Vec<i32>) {
+        self.tokenize_internal(string, tokens, false);
+    }
+
+    pub fn tokenize_special(&self, string: &str, tokens: &mut Vec<i32>) {
+        self.tokenize_internal(string, tokens, true);
+    }
+
+    unsafe fn detokenize_internal(
         &self,
         token: i32,
         bytes: &mut [MaybeUninit<u8>],
