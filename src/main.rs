@@ -1,11 +1,6 @@
 use {
     llama::{Model, Session, SessionBatch},
-    std::{
-        collections::hash_map::HashMap,
-        env,
-        sync::{Arc, Mutex},
-        time::Instant,
-    },
+    std::{env, fs, time::Instant},
     twilight_cache_inmemory::InMemoryCache,
     twilight_gateway::{Event, Intents, ShardId},
     twilight_model::channel::message::Message,
@@ -19,25 +14,35 @@ pub struct Clyde {
     rest: twilight_http::Client,
     session: Session,
     tokens: Vec<i32>,
-    url_cache: Arc<Mutex<HashMap<u16, String>>>,
 }
+
+static SYSTEM_MESSAGE_START: &str = "<|im_start|>system\n";
+static SYSTEM_MESSAGE_END: &str = "<|im_end|>\n";
+static USER_MESSAGE_START: &str = "<|im_start|>user\n";
+static USER_MESSAGE_END: &str = "<|im_end|>\n";
+static CLYDE_MESSAGE_START: &str = "<|im_start|>SYSTEM\n";
 
 impl Clyde {
     pub fn new(token: String) -> Self {
+        // TODO: dont hardcode
         let model = Model::options()
             .set_gpu_layers(33)
-            .open("../models/teknium_openhermes-2.5-mistral-7b.gguf")
+            .open("models/openhermes-2.5-mistral-7b.Q4_K_M.gguf")
             .expect("big oof energy");
 
+        // TODO: dont hardcode
         let mut batch = SessionBatch::new(32786, 1);
         let mut tokens = Vec::new();
 
-        model.tokenize_special("<|im_start|>system\n", &mut tokens);
-        model.tokenize(include_str!("personality.txt").trim(), &mut tokens);
-        model.tokenize_special("<|im_end|>\n", &mut tokens);
+        let personality = fs::read_to_string("personality.txt")
+            .expect("expected personality.txt in current directory. see personality.txt.example");
+        model.tokenize_special(SYSTEM_MESSAGE_START, &mut tokens);
+        model.tokenize(personality.trim(), &mut tokens);
+        model.tokenize_special(SYSTEM_MESSAGE_END, &mut tokens);
 
         batch.extend(tokens.iter().copied(), false);
 
+        // TODO: dont hardcode all of that
         let session = Session::options()
             .set_context_len(32786)
             .set_temperature(0.2)
@@ -60,7 +65,6 @@ impl Clyde {
             rest: twilight_http::Client::new(token),
             session,
             tokens,
-            url_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -104,9 +108,12 @@ impl Clyde {
         );
 
         tokens.clear();
-        model.tokenize_special("<|im_start|>user\n", tokens);
+        model.tokenize_special(USER_MESSAGE_START, tokens);
         model.tokenize(&content, tokens);
-        model.tokenize_special("<|im_end|>\n<|im_start|>assistant\nClyde:", tokens);
+        model.tokenize_special(
+            &format!("{USER_MESSAGE_END}{CLYDE_MESSAGE_START}Clyde:"),
+            tokens,
+        );
         batch.extend(tokens.drain(..), false);
 
         if let Some(logit) = batch.logits_mut().last_mut() {
@@ -142,12 +149,12 @@ impl Clyde {
             .trim()
             .trim_matches(|character: char| (character as u32) < 32);
 
-        let content = content.strip_prefix("assistant\n").unwrap_or(&content);
-        let content = content.strip_prefix("Clyde:").unwrap_or(&content);
+        let content = content.strip_prefix("assistant\n").unwrap_or(content);
+        let content = content.strip_prefix("Clyde:").unwrap_or(content);
 
         let content = content
             .strip_prefix("clyde:")
-            .unwrap_or(&content)
+            .unwrap_or(content)
             .trim()
             .trim_matches(|character: char| (character as u32) < 32);
 
@@ -167,7 +174,7 @@ impl Clyde {
             .build();
 
         rest.create_message(message.channel_id)
-            .content(&content)?
+            .content(content)?
             .embeds(&[embed])?
             .await?;
 
@@ -197,9 +204,7 @@ impl Clyde {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let token = env::var("CLYDE_TOKEN")?;
+    let token = env::var("CLYDE_TOKEN").expect("CLYDE_TOKEN");
 
-    Clyde::new(token).run().await?;
-
-    Ok(())
+    Clyde::new(token).run().await
 }
