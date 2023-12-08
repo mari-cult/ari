@@ -2,6 +2,12 @@ LLM is OpenHermes 2.5 fine-tune of Mistral 7B, 4-bit quantization, 3992.52 MiB V
 
 CLIP encoder is OpenAI's ViT model, [download](https://huggingface.co/mys/ggml_bakllava-1/resolve/main/mmproj-model-f16.gguf).
 
+Get llama.cpp
+
+```sh
+git submodule update --init
+```
+
 Build llama.cpp in `subprojects/llama.cpp`
 
 ```sh
