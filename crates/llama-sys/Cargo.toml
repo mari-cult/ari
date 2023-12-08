@@ -1,0 +1,12 @@
+[package]
+name = "llama-sys"
+version = "0.0.0"
+edition = "2021"
+
+[build-dependencies]
+cc = { version = "1.0.83", default-features = false }
+
+[features]
+clblast = []
+cublas = []
+hipblas = []
