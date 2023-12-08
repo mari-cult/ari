@@ -22,9 +22,6 @@ use {
     },
 };
 
-pub mod discord;
-pub mod prompt;
-
 pub struct Clyde {
     cache: InMemoryCache,
     gateway: twilight_gateway::Shard,
@@ -84,6 +81,7 @@ impl Clyde {
             .mentions
             .iter()
             .any(|mention| mention.id == clyde.id);
+
         let replying_to_clyde = message
             .referenced_message
             .as_ref()
@@ -100,8 +98,6 @@ impl Clyde {
         model.tokenize_special("<|im_start|>user\n", &mut tokens);
         model.tokenize(message.content.trim(), &mut tokens);
         model.tokenize_special("<|im_end|>\n<|im_start|>assistant\n", &mut tokens);
-
-        info!(target: "inference", "input={:?} ({} tokens)", message.content, tokens.len());
 
         for token in tokens.iter().copied() {
             let mut string = String::new();
@@ -121,6 +117,8 @@ impl Clyde {
 
         let mut then = Instant::now();
         let mut reply_id = None;
+
+        let start_index = tokens.len();
 
         tokens.clear();
 
@@ -143,7 +141,7 @@ impl Clyde {
 
             self.session.accept(token);
             batch.clear();
-            batch.add_token(token, tokens.len() as u32, true);
+            batch.add_token(token, (start_index + tokens.len()) as u32, true);
             tokens.push(token);
 
             let now = Instant::now();
