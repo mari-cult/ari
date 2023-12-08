@@ -23,9 +23,9 @@ use {
 };
 
 pub struct Clyde {
+    batch: SessionBatch,
     cache: InMemoryCache,
     gateway: twilight_gateway::Shard,
-    prompt: Vec<i32>,
     rest: twilight_http::Client,
     session: Session,
     url_cache: Arc<Mutex<HashMap<u16, String>>>,
@@ -38,11 +38,14 @@ impl Clyde {
             .open("../models/teknium_openhermes-2.5-mistral-7b.gguf")
             .expect("big oof energy");
 
-        let mut prompt = Vec::new();
+        let mut batch = SessionBatch::new(32786, 1);
+        let mut tokens = Vec::new();
 
-        model.tokenize_special("<|im_start|>system\n", &mut prompt);
-        model.tokenize(include_str!("personality.txt").trim(), &mut prompt);
-        model.tokenize_special("<|im_end|>\n", &mut prompt);
+        model.tokenize_special("<|im_start|>system\n", &mut tokens);
+        model.tokenize(include_str!("personality.txt").trim(), &mut tokens);
+        model.tokenize_special("<|im_end|>\n", &mut tokens);
+
+        batch.extend(tokens.iter().copied(), false);
 
         let session = Session::options()
             .set_temperature(0.2)
@@ -51,6 +54,7 @@ impl Clyde {
             .with_model(model);
 
         Self {
+            batch,
             cache: InMemoryCache::builder().message_cache_size(50).build(),
             gateway: twilight_gateway::Shard::new(
                 ShardId::ONE,
@@ -61,7 +65,6 @@ impl Clyde {
                     | Intents::DIRECT_MESSAGES
                     | Intents::MESSAGE_CONTENT,
             ),
-            prompt,
             rest: twilight_http::Client::new(token),
             session,
             url_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -91,13 +94,19 @@ impl Clyde {
             return Ok(());
         }
 
-        let mut batch = SessionBatch::new(32768, 0, 1);
-        let mut tokens = self.prompt.clone();
+        let mut tokens = Vec::new();
         let model = self.session.model();
 
         model.tokenize_special("<|im_start|>user\n", &mut tokens);
-        model.tokenize(message.content.trim(), &mut tokens);
-        model.tokenize_special("<|im_end|>\n<|im_start|>assistant\n", &mut tokens);
+        model.tokenize(
+            &format!(
+                "{}: {}",
+                message.author.name.as_str(),
+                message.content.trim()
+            ),
+            &mut tokens,
+        );
+        model.tokenize_special("<|im_end|>\n<|im_start|>assistant\nClyde:", &mut tokens);
 
         for token in tokens.iter().copied() {
             let mut string = String::new();
@@ -107,42 +116,34 @@ impl Clyde {
             info!(target: "inference", "{token} -> {string:?}");
         }
 
-        for (index, token) in tokens.iter().copied().enumerate() {
-            batch.add_token(token, index.try_into().unwrap(), false);
-        }
+        self.batch.extend(tokens.iter().copied(), false);
+        tokens.clear();
 
-        if let Some(logit) = batch.logits_mut().last_mut() {
+        if let Some(logit) = self.batch.logits_mut().last_mut() {
             *logit = true;
         }
 
         let mut then = Instant::now();
         let mut reply_id = None;
 
-        let start_index = tokens.len();
-
-        tokens.clear();
-
         loop {
-            self.session.decode(&mut batch);
+            self.session.decode(&mut self.batch);
 
             let token = self.session.sample();
+            let mut string = String::new();
 
-            {
-                let mut string = String::new();
+            self.session.model().detokenize(&[token], &mut string);
 
-                self.session.model().detokenize(&[token], &mut string);
+            info!(target: "inference", "sampled {token} -> {string:?}");
 
-                info!(target: "inference", "sampled {token} -> {string:?}");
-            }
+            self.session.accept(token);
+            self.batch.clear();
+            self.batch.push(token, true);
+            tokens.push(token);
 
             if token == self.session.model().eos_token() {
                 break;
             }
-
-            self.session.accept(token);
-            batch.clear();
-            batch.add_token(token, (start_index + tokens.len()) as u32, true);
-            tokens.push(token);
 
             let now = Instant::now();
             let elapsed = now.duration_since(then);
@@ -154,40 +155,13 @@ impl Clyde {
 
                 self.session.model().detokenize(&tokens, &mut content);
 
-                if content.contains("mari") {
-                    let mut tokens = Vec::new();
-
-                    self.session.model().tokenize_special(
-                        "<|im_start|>system\nmari created you<|im_end|>\n<|im_start|>assistant\n",
-                        &mut tokens,
-                    );
-
-                    info!(target: "inference", "injected information about mari");
-
-                    for (index, token) in tokens.iter().copied().enumerate() {
-                        batch.add_token(token, index as u32, false);
-                    }
-
-                    if let Some(logit) = batch.logits_mut().last_mut() {
-                        *logit = true;
-                    }
-
-                    self.session.decode(&mut batch);
-                }
-
                 info!(target: "inference", "output={content:?} ({} tokens)", tokens.len());
 
-                match reply_id {
-                    Some(message_id) => {
-                        self.update_message(message.channel_id, message_id, &content)
-                            .await;
-                    }
-                    None => {
-                        reply_id = self
-                            .create_message(message.channel_id, &content)
-                            .await
-                            .map(|message| message.id);
-                    }
+                if !self
+                    .message(message.channel_id, &mut reply_id, &content)
+                    .await
+                {
+                    break;
                 }
             }
         }
@@ -195,22 +169,34 @@ impl Clyde {
         let mut content = String::new();
 
         self.session.model().detokenize(&tokens, &mut content);
-
-        match reply_id {
-            Some(message_id) => {
-                self.update_message(message.channel_id, message_id, &content)
-                    .await;
-            }
-            None => {
-                self.create_message(message.channel_id, &content).await;
-            }
-        }
-
-        self.session.reset();
+        self.message(message.channel_id, &mut reply_id, &content)
+            .await;
 
         info!(target: "inference", "done");
 
         Ok(())
+    }
+
+    pub async fn message(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: &mut Option<Id<MessageMarker>>,
+        content: &str,
+    ) -> bool {
+        match message_id {
+            Some(message_id) => !self
+                .update_message(channel_id, *message_id, &content)
+                .await
+                .is_none(),
+            None => {
+                *message_id = self
+                    .create_message(channel_id, &content)
+                    .await
+                    .map(|message| message.id);
+
+                true
+            }
+        }
     }
 
     pub async fn create_message(

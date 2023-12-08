@@ -18,7 +18,7 @@ pub struct SessionOptions {
 
 pub struct SessionBatch {
     pub(crate) batch_ptr: OwnedPtr,
-    pub(crate) capacity: u32,
+    pub(crate) index: usize,
 }
 
 impl Session {
@@ -67,79 +67,51 @@ impl Session {
             sys::bindings_session_sampler_reset(self.sampler_ptr.as_mut_ptr());
         }
     }
-
-    pub fn infer(&mut self, tokens: &[i32]) -> String {
-        let mut batch = SessionBatch::new(512, 0, 1);
-
-        for (index, token) in tokens.iter().copied().enumerate() {
-            batch.add_token(token, index as u32, false);
-        }
-
-        if let Some(logit) = batch.logits_mut().last_mut() {
-            *logit = true;
-        }
-
-        let mut tokens = Vec::new();
-
-        for i in tokens.len()..100 {
-            self.decode(&mut batch);
-
-            let token = self.sample();
-
-            self.accept(token);
-
-            batch.clear();
-            batch.add_token(token, i as u32, true);
-            tokens.push(token);
-        }
-
-        let mut string = String::new();
-
-        self.model.detokenize(&tokens, &mut string);
-
-        string
-    }
 }
 
 impl SessionBatch {
-    pub fn new(token_capacity: u32, embedding_size: u32, max_sequence_ids: u32) -> Self {
+    pub fn new(token_capacity: u32, max_sequence_ids: u32) -> Self {
         unsafe {
             Self {
                 batch_ptr: OwnedPtr::new(
-                    sys::bindings_session_batch_init(
-                        token_capacity,
-                        embedding_size,
-                        max_sequence_ids,
-                    ),
+                    sys::bindings_session_batch_init(token_capacity, 0, max_sequence_ids),
                     sys::bindings_session_batch_drop,
                 ),
-                capacity: token_capacity,
+                index: 0,
             }
         }
     }
 
-    pub fn add_token(&mut self, token: i32, index: u32, logits: bool) {
-        unsafe {
-            sys::bindings_session_batch_add_token(
-                self.batch_ptr.as_mut_ptr(),
-                token,
-                index,
-                logits,
-            );
-        }
-    }
-
     pub fn clear(&mut self) {
+        tracing::debug!("clear tokens");
+
         unsafe {
             sys::bindings_session_batch_clear(self.batch_ptr.as_mut_ptr());
         }
     }
 
     pub fn len(&self) -> usize {
+        unsafe { sys::bindings_session_batch_tokens_len(self.batch_ptr.as_ptr()) as usize }
+    }
+
+    pub fn push(&mut self, token: i32, logit: bool) {
+        tracing::debug!("push {token} (index={}, len={})", self.index, self.len());
+
         unsafe {
-            sys::bindings_session_batch_tokens_len(self.batch_ptr.as_ptr())
-                .try_into()
-                .unwrap()
+            sys::bindings_session_batch_add_token(
+                self.batch_ptr.as_mut_ptr(),
+                token,
+                self.index as u32,
+                logit,
+            );
+
+            self.index += 1;
+        }
+    }
+
+    pub fn extend<I: IntoIterator<Item = i32>>(&mut self, tokens: I, logit: bool) {
+        for token in tokens.into_iter() {
+            self.push(token, logit);
         }
     }
 
