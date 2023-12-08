@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 llama-sys = { version = "0.0.0", path = "../llama-sys", default-features = false }
 thiserror = { version = "1.0.50", default-features = false }
+tracing = { version = "0.1.40", default-features = false, features = ["std"] }
 
 [features]
 clblast = ["llama-sys/clblast"]

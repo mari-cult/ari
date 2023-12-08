@@ -83,6 +83,8 @@ extern "C" {
         options: *const ffi::c_void,
     ) -> *mut ffi::c_void;
     pub fn bindings_session_options_drop(options: *mut ffi::c_void);
+    pub fn bindings_session_options_context_len(options: *const ffi::c_void) -> u32;
+    pub fn bindings_session_options_set_context_len(options: *mut ffi::c_void, value: u32);
     pub fn bindings_session_options_new() -> *mut ffi::c_void;
     pub fn bindings_session_sampler_drop(sampler: *mut ffi::c_void);
     pub fn bindings_session_sampler_new(options: *mut ffi::c_void) -> *mut ffi::c_void;

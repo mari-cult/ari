@@ -1,88 +1,52 @@
-use std::collections::{btree_map, BTreeMap};
-
 use {
-    base64::{engine::general_purpose::STANDARD, Engine},
-    image::{codecs::jpeg::JpegEncoder, imageops},
-    serde::{Deserialize, Serialize},
+    llama::{Model, Session, SessionBatch},
     std::{
-        collections::hash_map::{self, DefaultHasher, HashMap},
+        collections::hash_map::HashMap,
         env,
-        fmt::Write as _,
-        hash::{Hash, Hasher},
-        io,
         sync::{Arc, Mutex},
-        time::{Duration, Instant},
+        time::Instant,
     },
-    tracing::{debug, info, warn},
     twilight_cache_inmemory::InMemoryCache,
     twilight_gateway::{Event, Intents, ShardId},
-    twilight_model::{
-        channel::{message::MessageType, Message},
-        id::{marker::ChannelMarker, Id},
-    },
+    twilight_model::channel::message::Message,
     twilight_util::builder::embed::{EmbedBuilder, EmbedFooterBuilder},
 };
 
-pub mod discord;
-pub mod prompt;
-
 pub struct Clyde {
+    batch: SessionBatch,
     cache: InMemoryCache,
     gateway: twilight_gateway::Shard,
     rest: twilight_http::Client,
-    url_cache: Arc<Mutex<HashMap<u16, String>>>,
-}
-
-#[derive(Serialize)]
-pub struct LlamaImageData {
-    pub data: String,
-    pub id: u16,
-}
-
-#[derive(Serialize)]
-pub struct LlamaRequest {
-    pub image_data: Vec<LlamaImageData>,
-    pub max_new_tokens: u32,
-    pub n_predict: u32,
-    pub prompt: String,
-    pub repeat_penalty: f32,
-    pub stop: Vec<String>,
-    pub temperature: f32,
-    pub top_k: f32,
-    pub top_p: f32,
-    pub n_keep: i32,
-    pub truncate: u32,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-pub struct LlamaResponse {
-    pub content: String,
-    pub stopped_eos: bool,
-    pub stopped_limit: bool,
-    pub stopping_word: String,
-}
-
-pub struct LlamaResult {
-    pub content: String,
-
-    pub duration: Duration,
-    pub stop_reason: String,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct LlamaTokenize {
-    content: String,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct LlamaDetokenize {
+    session: Session,
     tokens: Vec<i32>,
+    url_cache: Arc<Mutex<HashMap<u16, String>>>,
 }
 
 impl Clyde {
     pub fn new(token: String) -> Self {
+        let model = Model::options()
+            .set_gpu_layers(33)
+            .open("../models/teknium_openhermes-2.5-mistral-7b.gguf")
+            .expect("big oof energy");
+
+        let mut batch = SessionBatch::new(32786, 1);
+        let mut tokens = Vec::new();
+
+        model.tokenize_special("<|im_start|>system\n", &mut tokens);
+        model.tokenize(include_str!("personality.txt").trim(), &mut tokens);
+        model.tokenize_special("<|im_end|>\n", &mut tokens);
+
+        batch.extend(tokens.iter().copied(), false);
+
+        let session = Session::options()
+            .set_context_len(32786)
+            .set_temperature(0.2)
+            .set_top_k(50.0)
+            .set_top_p(0.95)
+            .with_model(model);
+
         Self {
+            batch,
             cache: InMemoryCache::builder().message_cache_size(50).build(),
             gateway: twilight_gateway::Shard::new(
                 ShardId::ONE,
@@ -94,338 +58,120 @@ impl Clyde {
                     | Intents::MESSAGE_CONTENT,
             ),
             rest: twilight_http::Client::new(token),
+            session,
+            tokens,
             url_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub async fn start_typing(&self, channel_id: Id<ChannelMarker>) -> anyhow::Result<()> {
-        self.rest.create_typing_trigger(channel_id).await?;
-
-        Ok(())
-    }
-
     pub async fn process_message(&mut self, message: &Message) -> anyhow::Result<()> {
-        let Some(clyde_user) = self.cache.current_user() else {
-            warn!("Current user not cached");
+        let Self {
+            batch,
+            cache,
+            session,
+            tokens,
+            rest,
+            ..
+        } = self;
 
+        let Some(clyde) = cache.current_user() else {
             return Ok(());
         };
 
-        if message.author.bot {
-            debug!("Ignored bot message");
-
+        if message.author.id == clyde.id {
             return Ok(());
         }
 
-        if !matches!(
-            message.kind,
-            MessageType::Regular
-                | MessageType::Reply
-                | MessageType::UserJoin
-                | MessageType::GuildBoost
-                | MessageType::GuildBoostTier1
-                | MessageType::GuildBoostTier2
-                | MessageType::GuildBoostTier3
-                | MessageType::ChannelMessagePinned
-        ) {
-            return Ok(());
-        }
-
-        if !(message
+        let mentions_clyde = message
             .mentions
             .iter()
-            .any(|mention| mention.id == clyde_user.id)
-            || message
-                .referenced_message
-                .as_ref()
-                .is_some_and(|message| message.author.id == clyde_user.id)
-            || matches!(
-                message.kind,
-                MessageType::UserJoin
-                    | MessageType::GuildBoost
-                    | MessageType::GuildBoostTier1
-                    | MessageType::GuildBoostTier2
-                    | MessageType::GuildBoostTier3
-                    | MessageType::ChannelMessagePinned
-            ))
-        {
+            .any(|mention| mention.id == clyde.id);
+
+        let replying_to_clyde = message
+            .referenced_message
+            .as_ref()
+            .is_some_and(|message| message.author.id == clyde.id);
+
+        if !(mentions_clyde || replying_to_clyde) {
             return Ok(());
         }
 
-        let channel_id = message.channel_id;
+        let model = session.model();
+        let content = format!(
+            "{}:{}",
+            message.author.name.as_str(),
+            message.content.trim()
+        );
 
-        let Some(channel) = self.cache.channel(channel_id) else {
-            debug!("Ignored unknown channel");
+        tokens.clear();
+        model.tokenize_special("<|im_start|>user\n", tokens);
+        model.tokenize(&content, tokens);
+        model.tokenize_special("<|im_end|>\n<|im_start|>assistant\nClyde:", tokens);
+        batch.extend(tokens.drain(..), false);
 
-            return Ok(());
-        };
-
-        let channel_name = channel.name.as_deref().unwrap_or("unnamed");
-
-        let Some(channel_messages) = self.cache.channel_messages(channel_id) else {
-            debug!("Ignored channel without any messages");
-
-            return Ok(());
-        };
-
-        let mut channel_information =
-            format!("You are currently in the channel #{channel_name} (<#{channel_id}>).\n");
-
-        if let Some(channel_topic) = channel.topic.as_deref() {
-            write!(channel_information, "Channel Topic:{channel_topic}\n")?;
+        if let Some(logit) = batch.logits_mut().last_mut() {
+            *logit = true;
         }
 
-        let mut users = BTreeMap::new();
-        let mut image_limit = 1;
-        let mut message_list = Vec::new();
+        let start = Instant::now();
 
-        for message_id in channel_messages.iter().copied().rev() {
-            let Some(message) = self.cache.message(message_id) else {
-                continue;
-            };
+        loop {
+            session.decode(batch);
 
-            let author_id = message.author();
+            let token = session.sample();
 
-            let (author_name, author_avatar) = {
-                match self.cache.user(author_id) {
-                    Some(author) => (author.name.clone(), author.avatar),
-                    None => ("unknown".to_owned(), None),
-                }
-            };
+            session.accept(token);
+            batch.clear();
+            batch.push(token, true);
+            tokens.push(token);
 
-            if let btree_map::Entry::Vacant(entry) = users.entry(author_id) {
-                let mut author_information = format!("{author_name} (<@{author_id}>)");
-
-                if let Some(avatar_hash) = author_avatar {
-                    let user_id = author_id;
-                    let avatar_url = format!(
-                        "https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.webp?size=320"
-                    );
-
-                    match self.url(&avatar_url).await {
-                        Ok((image_id, _image_data)) => {
-                            if image_limit > 0 {
-                                image_limit -= 1;
-                                write!(author_information, " (Avatar [img-{image_id}])")?;
-                            }
-                        }
-                        Err(error) => warn!("{avatar_url}: {error}"),
-                    }
-                }
-
-                entry.insert((author_name.clone(), author_information));
-            }
-
-            match message.kind() {
-                MessageType::Regular | MessageType::Reply => {
-                    let content = message.content();
-
-                    if author_id == clyde_user.id {
-                        message_list.push(format!("assistant\n{content}"));
-                    } else {
-                        let mut message_information = format!("user\n{author_name}: {content}\n");
-
-                        for attachment in message.attachments() {
-                            let attachment_url = attachment.url.as_str();
-
-                            match self.url(attachment_url).await {
-                                Ok((image_id, _image_data)) => {
-                                    if image_limit > 0 {
-                                        image_limit -= 1;
-                                        write!(
-                                            message_information,
-                                            "{author_name} (attachment): [img-{image_id}]"
-                                        )?
-                                    }
-                                }
-                                Err(error) => warn!("{attachment_url}: {error}"),
-                            }
-                        }
-
-                        for embed in message.embeds() {
-                            if let Some(embed_title) = embed.title.as_deref() {
-                                write!(
-                                    message_information,
-                                    "{author_name} (embed): {embed_title}\n"
-                                )?;
-                            }
-
-                            if let Some(embed_description) = embed.description.as_deref() {
-                                write!(
-                                    message_information,
-                                    "{author_name} (embed): {embed_description}\n"
-                                )?;
-                            }
-
-                            if let Some(embed_footer) = embed.footer.as_ref() {
-                                let embed_footer_text = embed_footer.text.as_str();
-
-                                write!(
-                                    message_information,
-                                    "{author_name} (embed): {embed_footer_text}\n"
-                                )?;
-                            }
-                        }
-
-                        message_list.push(message_information.trim().into());
-                    }
-                }
-                MessageType::UserJoin => {
-                    message_list.push(format!("system\nUser {author_name} has joined the server."));
-                }
-                MessageType::ChannelMessagePinned => {
-                    message_list.push(format!("system\nUser {author_name} pinned a message."));
-                }
-                MessageType::GuildBoost
-                | MessageType::GuildBoostTier1
-                | MessageType::GuildBoostTier2
-                | MessageType::GuildBoostTier3 => {
-                    message_list.push(format!(
-                        "system\nUser {author_name} has boosted the server."
-                    ));
-                }
-                _ => continue,
+            if token == session.model().eos_token() {
+                break;
             }
         }
 
-        if message_list.is_empty() {
+        let elapsed = Instant::now().duration_since(start);
+        let mut bytes = Vec::new();
+
+        session
+            .model()
+            .detokenize(tokens.iter().copied(), &mut bytes);
+
+        let content = String::from_utf8_lossy(&bytes);
+        let content = content
+            .trim()
+            .trim_matches(|character: char| (character as u32) < 32);
+
+        let content = content.strip_prefix("assistant\n").unwrap_or(&content);
+        let content = content.strip_prefix("Clyde:").unwrap_or(&content);
+
+        let content = content
+            .strip_prefix("clyde:")
+            .unwrap_or(&content)
+            .trim()
+            .trim_matches(|character: char| (character as u32) < 32);
+
+        tracing::info!("content={content:?}");
+
+        if content.is_empty() {
             return Ok(());
         }
 
-        let system_prompt = include_str!("system_prompt.txt").trim();
+        let embed = EmbedBuilder::new()
+            .footer(EmbedFooterBuilder::new(format!(
+                "{:?} tokens in {:.2?} ({:.2?} t/s)",
+                tokens.len(),
+                elapsed,
+                (tokens.len() as f32) / elapsed.as_secs_f32(),
+            )))
+            .build();
 
-        let channel_information = channel_information.trim();
-
-        let mut user_information = users
-            .values()
-            .map(|(_, u)| u.to_string())
-            .collect::<Vec<_>>();
-
-        user_information.sort_unstable();
-
-        let user_information = user_information.join(",");
-        let user_information = user_information.trim();
-
-        let message_list = message_list.join("<|im_end|>\n<|im_start|>");
-        let mut message_list = String::from(message_list.trim());
-
-        message_list = format!("<|im_start|>{message_list}<|im_end|>");
-
-        let mut prompt = format!("<|im_start|>system\n{system_prompt}\n{channel_information}\nUsers in this channel:{user_information}<|im_end|>\nConversation:\n");
-        info!("system_prompt = {prompt}");
-
-        let _keep_tokens = llama_tokenize(&prompt).await?.len();
-        let dynamic_prompt = format!("{message_list}\n<|im_start|>assistant\nClyde:");
-        info!("dyanmic_prompt = {dynamic_prompt}");
-
-        prompt.push_str(&dynamic_prompt);
-        info!("full_prompt = {prompt}");
-
-        self.start_typing(channel_id).await?;
-
-        let in_tokens = llama_tokenize(&prompt).await?.len();
-
-        let mut stop = vec![
-            String::from("<|im_end|>"),
-            String::from("Clyde:"),
-            String::from("Clyde (attachment):"),
-            String::from("Clyde (embed):"),
-        ];
-
-        stop.extend(users.values().map(|(u, _)| format!("{u}:")));
-        stop.extend(users.values().map(|(u, _)| format!("{u} (attachment):")));
-        stop.extend(users.values().map(|(u, _)| format!("{u} (embed):")));
-
-        let image_data = self
-            .url_cache
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(id, value)| LlamaImageData {
-                id: *id,
-                data: value.clone(),
-            })
-            .collect::<Vec<_>>();
-
-        let LlamaResult {
-            content,
-            duration,
-            stop_reason,
-        } = llama_completion(LlamaRequest {
-            image_data,
-            max_new_tokens: 2048,
-            n_predict: 2048,
-            prompt,
-            repeat_penalty: 1.2,
-            stop,
-            temperature: 0.2,
-            top_k: 50.0,
-            top_p: 0.95,
-            n_keep: 0, //dbg!(keep_tokens).try_into().unwrap(),
-            truncate: 1950,
-        })
-        .await?;
-
-        let out_tokens = llama_tokenize(&content).await?.len();
-
-        let content = if content.is_empty() {
-            "<:clyde:1180421652832591892> *Clyde did not generate a response.*"
-        } else {
-            content.as_str()
-        };
-
-        let content = content.chars().collect::<Vec<_>>();
-        let mut iter = content
-            .chunks(1950)
-            .map(|chunk| chunk.iter().collect::<String>())
-            .map(|mut content| {
-                if content.matches("```").count() % 2 == 1 {
-                    content.push_str("```");
-                }
-
-                content
-            })
-            .peekable();
-
-        while let Some(content) = iter.next() {
-            let create_message = self
-                .rest
-                .create_message(message.channel_id)
-                .content(&content)?;
-
-            if iter.peek().is_none() {
-                let embed = EmbedBuilder::new()
-                    .color(0x5865f2)
-                    .footer(EmbedFooterBuilder::new(format!(
-                        "TheBloke/OpenHermes-2.5-Mistral-7B-GGUF | CLIP openai/clip-vit-large-patch14-336 | Took {duration:.2?} | Temperature 0.2 | Top K 50 | Top P 0.95 | Repeat penalty 1.2 | Input tokens {in_tokens} | Inferred tokens {out_tokens} | Stop reason {stop_reason}",
-                    )))
-                    .build();
-
-                create_message.embeds(&[embed])?.await?;
-            } else {
-                create_message.await?;
-            }
-        }
+        rest.create_message(message.channel_id)
+            .content(&content)?
+            .embeds(&[embed])?
+            .await?;
 
         Ok(())
-    }
-
-    pub async fn url(&self, url: &str) -> anyhow::Result<(u16, String)> {
-        let mut hasher = DefaultHasher::new();
-
-        url.hash(&mut hasher);
-
-        let id = (hasher.finish() % u16::MAX as u64) as u16;
-
-        match self.url_cache.lock().unwrap().entry(id) {
-            hash_map::Entry::Occupied(entry) => Ok((id, entry.get().clone())),
-            hash_map::Entry::Vacant(entry) => {
-                let bytes = reqwest::get(url).await?.bytes().await?;
-                let base64 = process_image(&bytes)?;
-
-                Ok((id, entry.insert(base64).clone()))
-            }
-        }
     }
 
     pub async fn run(mut self) -> anyhow::Result<()> {
@@ -447,125 +193,11 @@ impl Clyde {
     }
 }
 
-async fn llama_tokenize(string: &str) -> anyhow::Result<Vec<i32>> {
-    let tokens = reqwest::Client::new()
-        .post("http://127.0.0.1:8080/tokenize")
-        .json(&LlamaTokenize {
-            content: string.into(),
-        })
-        .send()
-        .await?
-        .json::<LlamaDetokenize>()
-        .await?
-        .tokens;
-
-    Ok(tokens)
-}
-
-async fn llama_detokenize(tokens: &[i32]) -> anyhow::Result<String> {
-    let content = reqwest::Client::new()
-        .post("http://127.0.0.1:8080/detokenize")
-        .json(&LlamaDetokenize {
-            tokens: tokens.into(),
-        })
-        .send()
-        .await?
-        .json::<LlamaTokenize>()
-        .await?
-        .content;
-
-    Ok(content)
-}
-
-async fn llama_completion(request: LlamaRequest) -> anyhow::Result<LlamaResult> {
-    let start = Instant::now();
-    let response = reqwest::Client::new()
-        .post("http://127.0.0.1:8080/completion")
-        .json(&request)
-        .send()
-        .await?
-        .json::<LlamaResponse>()
-        .await?;
-
-    let duration = Instant::now().duration_since(start);
-
-    Ok(LlamaResult {
-        content: response.content.trim().into(),
-        duration,
-        stop_reason: if response.stopped_eos {
-            "eos".into()
-        } else if response.stopped_limit {
-            "limit".into()
-        } else {
-            format!("token {}", response.stopping_word)
-        },
-    })
-}
-
-/// Process an image.
-///
-/// - Load image data from `bytes`.
-/// - Resize to 512x512, maintaining aspect ratio.
-/// - Quantize colour data.
-/// - Encode as a JPEG with 65% quality.
-/// - Encode as base64.
-fn process_image(bytes: &[u8]) -> anyhow::Result<String> {
-    debug!("Attempt to parse {} bytes as an image", bytes.len());
-
-    let image = image::load_from_memory(bytes)?;
-
-    debug!("Resize to 256x256");
-
-    let image = image.resize(256, 256, imageops::Triangle);
-
-    debug!("Ensure 8-bit RGBA");
-
-    let mut image = image.into_rgba8();
-
-    debug!("Build NEUQUANT color map");
-
-    let color_map = color_quant::NeuQuant::new(30, 128, image.as_raw());
-
-    debug!("Apply dithering");
-
-    imageops::dither(&mut image, &color_map);
-
-    debug!("Encode as JPEG with 65% quality.");
-
-    let mut jpeg = io::Cursor::new(Vec::new());
-
-    image.write_with_encoder(JpegEncoder::new_with_quality(&mut jpeg, 60))?;
-
-    debug!("Encode as base64");
-
-    let mut base64 = String::new();
-
-    STANDARD.encode_string(&jpeg.into_inner(), &mut base64);
-
-    Ok(base64)
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let token = env::var("CLYDE_TOKEN")?;
-
-    llama_completion(LlamaRequest {
-        //image_data,
-        image_data: vec![],
-        max_new_tokens: 2048,
-        n_predict: 2048,
-        prompt: String::from("<|im_start|>system\nhi<|im_end|>\n<|im_start|>assistant\n"),
-        repeat_penalty: 1.2,
-        stop: vec![String::from("<|im_end|>")],
-        temperature: 0.2,
-        top_k: 50.0,
-        top_p: 0.95,
-        n_keep: 0,
-        truncate: 1950,
-    })
-    .await?;
 
     Clyde::new(token).run().await?;
 
