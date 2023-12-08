@@ -20,7 +20,7 @@ static SYSTEM_MESSAGE_START: &str = "<|im_start|>system\n";
 static SYSTEM_MESSAGE_END: &str = "<|im_end|>\n";
 static USER_MESSAGE_START: &str = "<|im_start|>user\n";
 static USER_MESSAGE_END: &str = "<|im_end|>\n";
-static CLYDE_MESSAGE_START: &str = "<|im_start|>SYSTEM\n";
+static CLYDE_MESSAGE_START: &str = "<|im_start|>assistant\n";
 
 impl Clyde {
     pub fn new(token: String) -> Self {
