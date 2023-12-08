@@ -158,6 +158,15 @@ extern "C" void *bindings_session_options_new() {
       new llama_context_params(llama_context_default_params()));
 }
 
+extern "C" uint32_t bindings_session_options_context_len(const void *options) {
+  return static_cast<const llama_context_params *>(options)->n_ctx;
+}
+
+extern "C" void bindings_session_options_set_context_len(void *options,
+                                                         uint32_t value) {
+  static_cast<llama_context_params *>(options)->n_ctx = value;
+}
+
 extern "C" void bindings_session_options_drop(void *options) {
   delete static_cast<llama_context_params *>(options);
 }

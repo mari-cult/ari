@@ -169,6 +169,18 @@ impl SessionOptions {
         }
     }
 
+    pub fn context_len(&self) -> u32 {
+        unsafe { sys::bindings_session_options_context_len(self.options_ptr.as_ptr()) }
+    }
+
+    pub fn set_context_len(mut self, value: u32) -> Self {
+        unsafe {
+            sys::bindings_session_options_set_context_len(self.options_ptr.as_mut_ptr(), value);
+        }
+
+        self
+    }
+
     pub fn temperature(&self) -> f32 {
         unsafe {
             sys::bindings_session_sampler_options_temperature(self.sampler_options_ptr.as_ptr())
@@ -260,6 +272,7 @@ impl fmt::Debug for SessionBatch {
 impl fmt::Debug for SessionOptions {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct(any::type_name::<Self>())
+            .field("context_len", &self.context_len())
             .field("temperature", &self.temperature())
             .field("top_k", &self.top_k())
             .field("top_p", &self.top_p())

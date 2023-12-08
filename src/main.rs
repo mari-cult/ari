@@ -6,7 +6,7 @@ use {
         collections::hash_map::{self, DefaultHasher, HashMap},
         env,
         hash::{Hash, Hasher},
-        io,
+        io, slice,
         sync::{Arc, Mutex},
         time::{Duration, Instant},
     },
@@ -14,12 +14,16 @@ use {
     twilight_cache_inmemory::InMemoryCache,
     twilight_gateway::{Event, Intents, ShardId},
     twilight_model::{
-        channel::Message,
+        channel::message::{
+            embed::{Embed},
+            Message,
+        },
         id::{
             marker::{ChannelMarker, MessageMarker},
             Id,
         },
     },
+    twilight_util::builder::embed::{EmbedBuilder, EmbedFooterBuilder},
 };
 
 pub struct Clyde {
@@ -48,6 +52,7 @@ impl Clyde {
         batch.extend(tokens.iter().copied(), false);
 
         let session = Session::options()
+            .set_context_len(32786)
             .set_temperature(0.2)
             .set_top_k(50.0)
             .set_top_p(0.95)
@@ -97,23 +102,22 @@ impl Clyde {
         let mut tokens = Vec::new();
         let model = self.session.model();
 
-        model.tokenize_special("<|im_start|>user\n", &mut tokens);
-        model.tokenize(
-            &format!(
-                "{}: {}",
-                message.author.name.as_str(),
-                message.content.trim()
-            ),
-            &mut tokens,
+        let content = format!(
+            "{}: {}",
+            message.author.name.as_str(),
+            message.content.trim()
         );
+
+        model.tokenize_special("<|im_start|>user\n", &mut tokens);
+        model.tokenize(&content, &mut tokens);
         model.tokenize_special("<|im_end|>\n<|im_start|>assistant\nClyde:", &mut tokens);
 
         for token in tokens.iter().copied() {
-            let mut string = String::new();
+            let mut bytes = Vec::new();
 
-            self.session.model().detokenize(&[token], &mut string);
+            self.session.model().detokenize(Some(token), &mut bytes);
 
-            info!(target: "inference", "{token} -> {string:?}");
+            info!(target: "inference", "prompt: {token} -> {:?}", String::from_utf8_lossy(&bytes));
         }
 
         self.batch.extend(tokens.iter().copied(), false);
@@ -130,11 +134,11 @@ impl Clyde {
             self.session.decode(&mut self.batch);
 
             let token = self.session.sample();
-            let mut string = String::new();
+            let mut bytes = Vec::new();
 
-            self.session.model().detokenize(&[token], &mut string);
+            self.session.model().detokenize(Some(token), &mut bytes);
 
-            info!(target: "inference", "sampled {token} -> {string:?}");
+            info!(target: "inference", "sampler: {token} -> {:?}", String::from_utf8_lossy(&bytes));
 
             self.session.accept(token);
             self.batch.clear();
@@ -149,16 +153,20 @@ impl Clyde {
             let elapsed = now.duration_since(then);
 
             if elapsed > Duration::from_secs(1) {
+                let mut bytes = Vec::new();
+
                 then = now;
 
-                let mut content = String::new();
+                self.session
+                    .model()
+                    .detokenize(tokens.iter().copied(), &mut bytes);
 
-                self.session.model().detokenize(&tokens, &mut content);
+                let string = String::from_utf8_lossy(&bytes);
 
-                info!(target: "inference", "output={content:?} ({} tokens)", tokens.len());
+                info!(target: "inference", "message: {string:?} ({} tokens)", tokens.len());
 
                 if !self
-                    .message(message.channel_id, &mut reply_id, &content)
+                    .message(message.channel_id, &mut reply_id, &string, true)
                     .await
                 {
                     break;
@@ -166,13 +174,18 @@ impl Clyde {
             }
         }
 
-        let mut content = String::new();
+        let mut bytes = Vec::new();
 
-        self.session.model().detokenize(&tokens, &mut content);
-        self.message(message.channel_id, &mut reply_id, &content)
+        self.session
+            .model()
+            .detokenize(tokens.iter().copied(), &mut bytes);
+
+        let string = String::from_utf8_lossy(&bytes);
+
+        self.message(message.channel_id, &mut reply_id, &string, false)
             .await;
 
-        info!(target: "inference", "done");
+        info!(target: "inference", "done: {string:?} ({} tokens)", tokens.len());
 
         Ok(())
     }
@@ -182,15 +195,16 @@ impl Clyde {
         channel_id: Id<ChannelMarker>,
         message_id: &mut Option<Id<MessageMarker>>,
         content: &str,
+        generating: bool,
     ) -> bool {
         match message_id {
             Some(message_id) => !self
-                .update_message(channel_id, *message_id, &content)
+                .update_message(channel_id, *message_id, &content, generating)
                 .await
                 .is_none(),
             None => {
                 *message_id = self
-                    .create_message(channel_id, &content)
+                    .create_message(channel_id, &content, generating)
                     .await
                     .map(|message| message.id);
 
@@ -203,6 +217,7 @@ impl Clyde {
         &self,
         channel_id: Id<ChannelMarker>,
         content: &str,
+        generating: bool,
     ) -> Option<Message> {
         let content = content.trim();
 
@@ -215,7 +230,13 @@ impl Clyde {
         let result = self.rest.create_message(channel_id).content(content);
 
         let result = match result {
-            Ok(future) => future.await,
+            Ok(future) => {
+                if let Some(embed) = embed(generating) {
+                    future.embeds(&[embed]).unwrap().await
+                } else {
+                    future.await
+                }
+            }
             Err(error) => {
                 warn!("Cannot send a message with invalid content: {error}");
 
@@ -247,6 +268,7 @@ impl Clyde {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
         content: &str,
+        generating: bool,
     ) -> Option<Message> {
         let content = content.trim();
 
@@ -256,9 +278,12 @@ impl Clyde {
             return None;
         }
 
+        let embed = embed(generating);
         let result = self
             .rest
             .update_message(channel_id, message_id)
+            .embeds(embed.as_ref().map(slice::from_ref))
+            .unwrap()
             .content(Some(content));
 
         let result = match result {
@@ -324,6 +349,16 @@ impl Clyde {
             }
         }
     }
+}
+
+fn embed(generating: bool) -> Option<Embed> {
+    let footer = if generating { "Generating..." } else { "Done" };
+
+    let embed = EmbedBuilder::new()
+        .footer(EmbedFooterBuilder::new(footer))
+        .build();
+
+    Some(embed)
 }
 
 /// Process an image.
