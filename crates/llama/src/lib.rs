@@ -3,7 +3,7 @@ pub use {
     error::Error,
     llama_sys as sys,
     model::{Model, ModelOptions},
-    session::{Session, SessionOptions},
+    session::{Session, SessionBatch, SessionOptions},
 };
 
 mod clip_model;
