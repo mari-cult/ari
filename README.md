@@ -8,12 +8,6 @@ Get llama.cpp
 git submodule update --init
 ```
 
-Build llama.cpp in `subprojects/llama.cpp`
-
-```sh
-make LLAMA_CLBLAST=1 -j24
-```
-
 Run bot (env vars for llama like `RUSTICL_ENABLE` are forwarded)
 
 ```sh
