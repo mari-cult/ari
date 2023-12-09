@@ -17,10 +17,9 @@ pub struct Clyde {
 }
 
 static SYSTEM_MESSAGE_START: &str = "<|im_start|>system\n";
-static SYSTEM_MESSAGE_END: &str = "<|im_end|>\n";
 static USER_MESSAGE_START: &str = "<|im_start|>user\n";
-static USER_MESSAGE_END: &str = "<|im_end|>\n";
 static CLYDE_MESSAGE_START: &str = "<|im_start|>assistant\n";
+static MESSAGE_END: &str = "<|im_end|>\n";
 
 impl Clyde {
     pub fn new(token: String) -> Self {
@@ -38,7 +37,7 @@ impl Clyde {
             .expect("expected personality.txt in current directory. see personality.txt.example");
         model.tokenize_special(SYSTEM_MESSAGE_START, &mut tokens);
         model.tokenize(personality.trim(), &mut tokens);
-        model.tokenize_special(SYSTEM_MESSAGE_END, &mut tokens);
+        model.tokenize_special(MESSAGE_END, &mut tokens);
 
         batch.extend(tokens.iter().copied(), false);
 
@@ -111,7 +110,7 @@ impl Clyde {
         model.tokenize_special(USER_MESSAGE_START, tokens);
         model.tokenize(&content, tokens);
         model.tokenize_special(
-            &format!("{USER_MESSAGE_END}{CLYDE_MESSAGE_START}Clyde:"),
+            &format!("{MESSAGE_END}{CLYDE_MESSAGE_START}Clyde:"),
             tokens,
         );
         batch.extend(tokens.drain(..), false);
