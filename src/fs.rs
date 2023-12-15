@@ -45,7 +45,7 @@ impl Options {
 
         let mut bytes = Vec::new();
 
-        self.open(path)?.read(&mut bytes)?;
+        self.open(path)?.read_to_end(&mut bytes)?;
 
         Ok(bytes)
     }
@@ -63,17 +63,16 @@ impl Options {
     }
 
     pub fn json<T: DeserializeOwned, P: AsRef<Path>>(&self, path: P) -> io::Result<T> {
-        serde_json::from_reader(self.open(path)?).map_err(|error| io::Error::other(error))
+        serde_json::from_reader(self.open(path)?).map_err(io::Error::other)
     }
 
     pub fn toml<T: DeserializeOwned, P: AsRef<Path>>(&self, path: P) -> io::Result<T> {
-        toml::from_str(&self.read_to_string(path)?).map_err(|error| io::Error::other(error))
+        toml::from_str(&self.read_to_string(path)?).map_err(io::Error::other)
     }
 
     pub fn tokenizer<P: AsRef<Path>>(&self, path: P) -> io::Result<Tokenizer> {
         Ok(Tokenizer {
-            tokenizer: tokenizers::Tokenizer::from_file(path)
-                .map_err(|error| io::Error::other(error))?,
+            tokenizer: tokenizers::Tokenizer::from_file(path).map_err(io::Error::other)?,
         })
     }
 }

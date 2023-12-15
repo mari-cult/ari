@@ -1,12 +1,15 @@
 use {
     crate::{fs, huggingface, tokenizer::Tokenizer},
     candle_core::{DType, Device, Tensor},
-    candle_transformers::models::{
-        llama, mistral, mixformer, quantized_llama, quantized_mistral, quantized_mixformer,
-        quantized_stable_lm, stable_lm,
+    candle_transformers::{
+        models::{
+            llama, mistral, mixformer, quantized_llama, quantized_mistral, quantized_mixformer,
+            quantized_stable_lm, stable_lm,
+        },
+        quantized_var_builder,
     },
     serde::{Deserialize, Serialize},
-    std::path::PathBuf,
+    std::{fs::File, path::PathBuf},
 };
 
 pub enum LanguageModel {
@@ -197,7 +200,7 @@ impl LanguageModelType {
             let config = self.phi_config().unwrap();
 
             if self.is_quantized() {
-                let vars = quantized_mixformer::VarBuilder::from_gguf(&paths[0])?;
+                let vars = vars_gguf(paths)?;
                 let model = if matches!(self, Self::Phi2_2_7bQ4) {
                     quantized_mixformer::MixFormerSequentialForCausalLM::new_v2(&config, vars)?
                 } else {
@@ -206,10 +209,7 @@ impl LanguageModelType {
 
                 Ok(LanguageModel::QuantizedMixformer(model))
             } else {
-                let vars = unsafe {
-                    candle_nn::VarBuilder::from_mmaped_safetensors(&paths, dtype, &device)?
-                };
-
+                let vars = vars_safetensors(paths, dtype, device)?;
                 let model = if matches!(self, Self::Phi2_2_7b) {
                     mixformer::MixFormerSequentialForCausalLM::new_v2(&config, vars)?
                 } else {
@@ -222,15 +222,12 @@ impl LanguageModelType {
             let config = stable_lm::Config::stablelm_3b_4e1t(false);
 
             if self.is_quantized() {
-                let vars = quantized_stable_lm::VarBuilder::from_gguf(&paths[0])?;
+                let vars = vars_gguf(paths)?;
                 let model = quantized_stable_lm::Model::new(&config, vars)?;
 
                 Ok(LanguageModel::QuantizedStableLm(model))
             } else {
-                let vars = unsafe {
-                    candle_nn::VarBuilder::from_mmaped_safetensors(&paths, dtype, &device)?
-                };
-
+                let vars = vars_safetensors(paths, dtype, device)?;
                 let model = stable_lm::Model::new(&config, vars)?;
 
                 Ok(LanguageModel::StableLm(model))
@@ -270,4 +267,24 @@ impl LanguageModel {
             Self::QuantizedLlama(model) => others(model.forward(input, position)?),
         }
     }
+}
+
+fn vars_gguf(paths: Vec<PathBuf>) -> anyhow::Result<quantized_var_builder::VarBuilder> {
+    assert_eq!(paths.len(), 1);
+
+    let path = &paths[0];
+    let bytes = unsafe { memmap2::Mmap::map(&File::open(path)?)? };
+    let vars = quantized_var_builder::VarBuilder::from_gguf_buffer(&bytes)?;
+
+    Ok(vars)
+}
+
+fn vars_safetensors<'a>(
+    paths: Vec<PathBuf>,
+    dtype: DType,
+    device: &Device,
+) -> anyhow::Result<candle_nn::VarBuilder<'a>> {
+    let vars = unsafe { candle_nn::VarBuilder::from_mmaped_safetensors(&paths, dtype, device)? };
+
+    Ok(vars)
 }
