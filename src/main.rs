@@ -1,3 +1,5 @@
+use candle_core::Device;
+
 pub mod fs;
 pub mod huggingface;
 pub mod model;
@@ -12,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
     let settings = fs::Options::new().toml::<settings::Settings, _>("settings.toml")?;
     let model = settings.language.model;
     let tokenizer = model.load_tokenizer()?;
-    let model = model.load_model()?;
+    let model = model.load_model(&Device::Cpu)?;
     let mut text_generation = text_generation::TextGeneration::new(model, tokenizer);
     let result = text_generation.generate("hi how are you?")?;
 

@@ -185,9 +185,13 @@ impl LanguageModelType {
             .map_err(Into::into)
     }
 
-    pub fn load_model(&self) -> anyhow::Result<LanguageModel> {
+    pub fn load_model(&self, device: &Device) -> anyhow::Result<LanguageModel> {
         let paths = self.fetch_model()?;
-        let device = Device::Cpu;
+        let dtype = if device.is_cuda() {
+            DType::BF16
+        } else {
+            DType::F16
+        };
 
         if self.is_phi() {
             let config = self.phi_config().unwrap();
@@ -203,7 +207,7 @@ impl LanguageModelType {
                 Ok(LanguageModel::QuantizedMixformer(model))
             } else {
                 let vars = unsafe {
-                    candle_nn::VarBuilder::from_mmaped_safetensors(&paths, DType::F16, &device)?
+                    candle_nn::VarBuilder::from_mmaped_safetensors(&paths, dtype, &device)?
                 };
 
                 let model = if matches!(self, Self::Phi2_2_7b) {
@@ -224,7 +228,7 @@ impl LanguageModelType {
                 Ok(LanguageModel::QuantizedStableLm(model))
             } else {
                 let vars = unsafe {
-                    candle_nn::VarBuilder::from_mmaped_safetensors(&paths, DType::F16, &device)?
+                    candle_nn::VarBuilder::from_mmaped_safetensors(&paths, dtype, &device)?
                 };
 
                 let model = stable_lm::Model::new(&config, vars)?;
