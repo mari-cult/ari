@@ -187,7 +187,7 @@ impl LanguageModelType {
 
     pub fn load_model(&self) -> anyhow::Result<LanguageModel> {
         let paths = self.fetch_model()?;
-        let device = Device::new_cuda(0)?;
+        let device = Device::Cpu;
 
         if self.is_phi() {
             let config = self.phi_config().unwrap();
@@ -203,7 +203,7 @@ impl LanguageModelType {
                 Ok(LanguageModel::QuantizedMixformer(model))
             } else {
                 let vars = unsafe {
-                    candle_nn::VarBuilder::from_mmaped_safetensors(&paths, DType::BF16, &device)?
+                    candle_nn::VarBuilder::from_mmaped_safetensors(&paths, DType::F16, &device)?
                 };
 
                 let model = if matches!(self, Self::Phi2_2_7b) {
@@ -224,7 +224,7 @@ impl LanguageModelType {
                 Ok(LanguageModel::QuantizedStableLm(model))
             } else {
                 let vars = unsafe {
-                    candle_nn::VarBuilder::from_mmaped_safetensors(&paths, DType::BF16, &device)?
+                    candle_nn::VarBuilder::from_mmaped_safetensors(&paths, DType::F16, &device)?
                 };
 
                 let model = stable_lm::Model::new(&config, vars)?;
@@ -239,31 +239,31 @@ impl LanguageModelType {
 
 impl LanguageModel {
     pub fn forward(&mut self, input: &[u32], position: usize) -> anyhow::Result<Tensor> {
+        fn stable_lm(tensor: Tensor) -> anyhow::Result<Tensor> {
+            Ok(tensor.squeeze(0)?.squeeze(0)?.to_dtype(DType::F32)?)
+        }
+
+        fn mixformer(tensor: Tensor) -> anyhow::Result<Tensor> {
+            Ok(tensor.squeeze(0)?.to_dtype(DType::F32)?)
+        }
+
+        fn others(tensor: Tensor) -> anyhow::Result<Tensor> {
+            Ok(tensor.squeeze(0)?)
+        }
+
         let device = Device::Cpu;
         let input = Tensor::new(input, &device)?.unsqueeze(0)?;
         let input = &input;
 
-        let logits = match self {
-            Self::StableLm(model) => model
-                .forward(input, position)?
-                .squeeze(0)?
-                .squeeze(0)?
-                .to_dtype(DType::F32)?,
-            Self::QuantizedStableLm(model) => model
-                .forward(input, position)?
-                .squeeze(0)?
-                .squeeze(0)?
-                .to_dtype(DType::F32)?,
-            Self::Mixformer(model) => model.forward(input)?.squeeze(0)?.to_dtype(DType::F32)?,
-            Self::QuantizedMixformer(model) => {
-                model.forward(input)?.squeeze(0)?.to_dtype(DType::F32)?
-            }
-            Self::Mistral(model) => model.forward(input, position)?.squeeze(0)?,
-            Self::QuantizedMistral(model) => model.forward(input, position)?.squeeze(0)?,
-            Self::Llama(model) => model.forward(input, position)?.squeeze(0)?,
-            Self::QuantizedLlama(model) => model.forward(input, position)?.squeeze(0)?,
-        };
-
-        Ok(logits)
+        match self {
+            Self::StableLm(model) => stable_lm(model.forward(input, position)?),
+            Self::QuantizedStableLm(model) => stable_lm(model.forward(input, position)?),
+            Self::Mixformer(model) => mixformer(model.forward(input)?),
+            Self::QuantizedMixformer(model) => mixformer(model.forward(input)?),
+            Self::Mistral(model) => others(model.forward(input, position)?),
+            Self::QuantizedMistral(model) => others(model.forward(input, position)?),
+            Self::Llama(model) => others(model.forward(input, position)?),
+            Self::QuantizedLlama(model) => others(model.forward(input, position)?),
+        }
     }
 }
