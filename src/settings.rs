@@ -1,5 +1,5 @@
 use {
-    crate::model::LanguageModelType,
+    crate::model::{LanguageModelType, VisionModelType},
     serde::{Deserialize, Serialize},
     std::num::NonZeroU16,
     ubyte::{ByteUnit, ToByteUnit},
@@ -24,11 +24,17 @@ pub struct Language {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Vision {
+    pub model: VisionModelType,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Settings {
     #[serde(default)]
     pub cache: Cache,
     pub discord: Discord,
     pub language: Language,
+    pub vision: Vision,
 }
 
 impl Default for Cache {

@@ -13,6 +13,7 @@ futures-util = { version = "0.3.29", default-features = false, features = ["std"
 hf-hub = { version = "0.3.2", default-features = false, features = ["online", "tokio"] }
 html2text = { version = "0.7.0", default-features = false }
 image = { version = "0.24.7", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+linkify = { version = "0.10.0", default-features = false }
 lru = { version = "0.12.1", default-features = false, features = ["hashbrown"] }
 memmap2 = { version = "0.9.0", default-features = false }
 reqwest = { version = "0.11.22", default-features = false, features = ["brotli", "cookies", "deflate", "gzip", "rustls-tls-webpki-roots", "stream"] }
@@ -28,6 +29,7 @@ twilight-cache-inmemory = { version = "0.15.4", default-features = false, featur
 twilight-gateway = { version = "0.15.4", default-features = false, features = ["rustls-webpki-roots"] }
 twilight-http = { version = "0.15.4", default-features = false, features = ["decompression", "rustls-webpki-roots"] }
 twilight-mention = { version = "0.15.3", default-features = false }
+twilight-model = { version = "0.15.4", default-features = false }
 twilight-util = { version = "0.15.4", default-features = false, features = ["builder"] }
 ubyte = { version = "0.10.4", default-features = false, features = ["serde"] }
 

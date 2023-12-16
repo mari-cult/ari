@@ -287,6 +287,7 @@ dependencies = [
  "hf-hub",
  "html2text",
  "image",
+ "linkify",
  "lru",
  "memmap2 0.9.0",
  "reqwest",
@@ -302,6 +303,7 @@ dependencies = [
  "twilight-gateway",
  "twilight-http",
  "twilight-mention",
+ "twilight-model",
  "twilight-util",
  "ubyte",
 ]
@@ -1284,6 +1286,15 @@ dependencies = [
  "bitflags 2.4.1",
  "libc",
  "redox_syscall",
+]
+
+[[package]]
+name = "linkify"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1dfa36d52c581e9ec783a7ce2a5e0143da6237be5811a0b3153fedfdbe9f780"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

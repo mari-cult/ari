@@ -1,52 +1,60 @@
 use {
-    crate::{settings::Settings, text_generation::TextGeneration},
+    crate::{content::ContentCache, image_to_text::ImageToText, text_generation::TextGeneration},
     candle_core::Device,
-    futures_util::stream::StreamExt,
-    image::{io::Reader as ImageReader, DynamicImage},
-    lru::LruCache,
-    std::io::Cursor,
+    std::fmt::Write,
     twilight_cache_inmemory::InMemoryCache,
     twilight_gateway::{Event, Intents, Shard as Gateway, ShardId},
     twilight_http::Client as Rest,
+    twilight_model::{
+        channel::Message,
+        id::{marker::ChannelMarker, Id},
+    },
 };
 
+const SANDBOX_ID: Id<ChannelMarker> = Id::new(1185415937780883456);
+
+pub mod content;
 pub mod fs;
 pub mod huggingface;
+pub mod image_to_text;
 pub mod model;
 pub mod settings;
 pub mod text_generation;
 pub mod tokenizer;
 
-pub enum Content {
-    Text(String),
-    Image(DynamicImage),
-}
-
 pub struct Clyde {
     cache: twilight_cache_inmemory::InMemoryCache,
+    content_cache: ContentCache,
     gateway: twilight_gateway::Shard,
+    image_to_text: ImageToText,
     rest: twilight_http::Client,
-    settings: Settings,
     text_generation: TextGeneration,
-    content_cache: LruCache<String, Content>,
 }
 
 impl Clyde {
     pub fn new() -> anyhow::Result<Self> {
-        let settings = fs::Options::new().toml::<settings::Settings, _>("settings.toml")?;
-        let model = settings.language.model;
-        let tokenizer = model.load_tokenizer()?;
-        let model = model.load_model(&Device::Cpu)?;
+        let settings::Settings {
+            cache,
+            discord,
+            language,
+            vision,
+        } = fs::Options::new().toml("settings.toml")?;
+
+        let tokenizer = language.model.load_tokenizer()?;
+        let model = language.model.load_model(&Device::Cpu)?;
         let text_generation = text_generation::TextGeneration::new(model, tokenizer);
-        let max_entries = settings.cache.max_entries.try_into().unwrap();
+
+        let tokenizer = vision.model.load_tokenizer()?;
+        let model = vision.model.load_model(&Device::Cpu)?;
+        let image_to_text = ImageToText::new(model, tokenizer);
 
         Ok(Self {
             cache: InMemoryCache::new(),
-            gateway: Gateway::new(ShardId::ONE, settings.discord.token.clone(), Intents::all()),
-            rest: Rest::new(settings.discord.token.clone()),
-            settings,
+            content_cache: ContentCache::new(cache.max_entries, cache.max_file_size),
+            gateway: Gateway::new(ShardId::ONE, discord.token.clone(), Intents::all()),
+            image_to_text,
+            rest: Rest::new(discord.token.clone()),
             text_generation,
-            content_cache: LruCache::new(max_entries),
         })
     }
 
@@ -62,29 +70,80 @@ impl Clyde {
         }
     }
 
-    pub async fn fetch_url(&mut self, url: &str) -> anyhow::Result<()> {
-        let mut stream = reqwest::get(url).await?.bytes_stream();
-        let mut bytes = Vec::new();
+    fn should_reply(&self, message: &Message) -> bool {
+        let Some(current_user) = self.cache.current_user() else {
+            return false;
+        };
 
-        while let Some(result) = stream.next().await {
-            bytes.extend_from_slice(&result?);
+        if message.author.id == current_user.id {
+            return false;
+        }
 
-            if u128::try_from(bytes.len()).unwrap() > self.settings.cache.max_file_size.as_u128() {
-                return Ok(());
+        let in_dm = message.guild_id.is_none();
+        let in_sandbox = message.channel_id == SANDBOX_ID;
+        let mentions_clyde = message
+            .mentions
+            .iter()
+            .any(|mention| mention.id == current_user.id);
+
+        let reply_to_clyde = message
+            .referenced_message
+            .as_ref()
+            .is_some_and(|message| message.author.id == current_user.id);
+
+        in_dm || in_sandbox || mentions_clyde || reply_to_clyde
+    }
+
+    pub async fn process_message(&mut self, message: &Message) -> anyhow::Result<()> {
+        if !self.should_reply(message) {
+            return Ok(());
+        }
+
+        let mut prompt = String::new();
+        let message_ids = self.cache.channel_messages(message.channel_id).unwrap();
+
+        for message_id in message_ids.iter().copied() {
+            let message = self.cache.message(message_id).unwrap();
+            let content = message.content();
+            let user = self.cache.user(message.author()).unwrap();
+            let name = user.name.as_str();
+
+            write!(prompt, "{name}: {content}\n")?;
+
+            for url in urls(content) {
+                let content = self
+                    .content_cache
+                    .fetch_url(url, &mut self.text_generation, &mut self.image_to_text)
+                    .await?;
+
+                let summary = content.summary();
+
+                write!(prompt, "{url}: {summary}\n")?;
             }
         }
 
-        let content_type = content_inspector::inspect(&bytes);
-        let bytes = Cursor::new(bytes);
+        let response = self.text_generation.generate(&prompt)?;
+        let response = response.trim();
 
-        if content_type.is_text() {
-            let _string = html2text::from_read(bytes, usize::MAX);
-        } else if content_type.is_binary() {
-            let _image = ImageReader::new(bytes).with_guessed_format()?.decode()?;
-        }
+        let Ok(create_message) = self
+            .rest
+            .create_message(message.channel_id)
+            .content(response)
+        else {
+            return Ok(());
+        };
+
+        create_message.await?;
 
         Ok(())
     }
+}
+
+fn urls<'a>(string: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    let mut options = linkify::LinkFinder::new();
+
+    options.kinds(&[linkify::LinkKind::Url]);
+    options.links(string).map(|line| line.as_str())
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -98,7 +157,11 @@ async fn main() -> anyhow::Result<()> {
 
         clyde.cache.update(&event);
 
-        println!("{event:?}");
+        let Event::MessageCreate(message) = event else {
+            continue;
+        };
+
+        clyde.process_message(&message).await?;
     }
 
     Ok(())

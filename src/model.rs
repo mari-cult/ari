@@ -3,8 +3,8 @@ use {
     candle_core::{DType, Device, Tensor},
     candle_transformers::{
         models::{
-            llama, mistral, mixformer, quantized_llama, quantized_mistral, quantized_mixformer,
-            quantized_stable_lm, stable_lm,
+            blip, llama, mistral, mixformer, quantized_blip, quantized_llama, quantized_mistral,
+            quantized_mixformer, quantized_stable_lm, stable_lm,
         },
         quantized_var_builder,
     },
@@ -64,6 +64,21 @@ pub enum LanguageModelType {
 
     #[serde(rename = "stablelm-zephyr-3b")]
     StableLmZephyr3b,
+}
+
+pub enum VisionModel {
+    Blip(blip::BlipForConditionalGeneration),
+    QuantizedBlip(quantized_blip::BlipForConditionalGeneration),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[non_exhaustive]
+pub enum VisionModelType {
+    #[serde(rename = "blip-large")]
+    BlipLarge,
+
+    #[serde(rename = "blip-large-q4")]
+    BlipLargeQ4,
 }
 
 impl LanguageModelType {
@@ -266,6 +281,98 @@ impl LanguageModel {
             Self::Llama(model) => others(model.forward(input, position)?),
             Self::QuantizedLlama(model) => others(model.forward(input, position)?),
         }
+    }
+}
+
+impl VisionModelType {
+    pub fn repository(&self) -> &'static str {
+        match self {
+            Self::BlipLarge => "Salesforce/blip-image-captioning-large",
+            Self::BlipLargeQ4 => "lmz/candle-blip",
+        }
+    }
+
+    pub fn file_names(&self) -> &'static [&'static str] {
+        match self {
+            Self::BlipLargeQ4 => &["blip-image-captioning-large-q4k.gguf"],
+            _ => &["model.safetensors"],
+        }
+    }
+
+    pub fn tokenizer_repository(&self) -> &'static str {
+        match self {
+            _ => "Salesforce/blip-image-captioning-large",
+        }
+    }
+
+    pub fn tokenizer_file_name(&self) -> &'static str {
+        match self {
+            _ => "tokenizer.json",
+        }
+    }
+
+    pub fn fetch_tokenizer(&self) -> anyhow::Result<Vec<PathBuf>> {
+        huggingface::fetch(self.tokenizer_repository(), &[self.tokenizer_file_name()])
+            .map_err(Into::into)
+    }
+
+    pub fn fetch_model(&self) -> anyhow::Result<Vec<PathBuf>> {
+        huggingface::fetch(self.repository(), self.file_names()).map_err(Into::into)
+    }
+
+    pub fn load_tokenizer(&self) -> anyhow::Result<Tokenizer> {
+        fs::Options::new()
+            .tokenizer(&self.fetch_tokenizer()?[0])
+            .map_err(Into::into)
+    }
+
+    pub fn load_model(&self, device: &Device) -> anyhow::Result<VisionModel> {
+        let paths = self.fetch_model()?;
+        let config = blip::Config::image_captioning_large();
+
+        match self {
+            Self::BlipLarge => {
+                let vars = vars_safetensors(paths, DType::F32, device)?;
+                let model = blip::BlipForConditionalGeneration::new(&config, vars)?;
+
+                Ok(VisionModel::Blip(model))
+            }
+            Self::BlipLargeQ4 => {
+                let vars = vars_gguf(paths)?;
+                let model = quantized_blip::BlipForConditionalGeneration::new(&config, vars)?;
+
+                Ok(VisionModel::QuantizedBlip(model))
+            }
+        }
+    }
+}
+
+impl VisionModel {
+    pub fn image_to_embedding(&self, image: &Tensor, device: &Device) -> anyhow::Result<Tensor> {
+        let input = image.to_device(device)?.unsqueeze(0)?;
+
+        match self {
+            Self::Blip(model) => Ok(input.apply(model.vision_model())?),
+            Self::QuantizedBlip(model) => Ok(input.apply(model.vision_model())?),
+        }
+    }
+
+    pub fn text_decoder_forward(
+        &mut self,
+        input: &[u32],
+        embedding: &Tensor,
+        device: &Device,
+    ) -> anyhow::Result<Tensor> {
+        let input = Tensor::new(input, device)?.unsqueeze(0)?;
+        let input = &input;
+        let logits = match self {
+            Self::Blip(model) => model.text_decoder().forward(input, embedding)?,
+            Self::QuantizedBlip(model) => model.text_decoder().forward(input, embedding)?,
+        };
+
+        let logits = logits.squeeze(0)?;
+
+        Ok(logits.get(logits.dim(0)? - 1)?)
     }
 }
 
