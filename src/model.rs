@@ -300,15 +300,11 @@ impl VisionModelType {
     }
 
     pub fn tokenizer_repository(&self) -> &'static str {
-        match self {
-            _ => "Salesforce/blip-image-captioning-large",
-        }
+        "Salesforce/blip-image-captioning-large"
     }
 
     pub fn tokenizer_file_name(&self) -> &'static str {
-        match self {
-            _ => "tokenizer.json",
-        }
+        "tokenizer.json"
     }
 
     pub fn fetch_tokenizer(&self) -> anyhow::Result<Vec<PathBuf>> {
@@ -354,6 +350,13 @@ impl VisionModel {
         match self {
             Self::Blip(model) => Ok(input.apply(model.vision_model())?),
             Self::QuantizedBlip(model) => Ok(input.apply(model.vision_model())?),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        match self {
+            VisionModel::Blip(model) => model.reset_kv_cache(),
+            VisionModel::QuantizedBlip(model) => model.reset_kv_cache(),
         }
     }
 

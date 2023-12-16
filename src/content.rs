@@ -2,6 +2,7 @@ use {
     crate::{ImageToText, TextGeneration},
     candle_core::{DType, Device, Tensor},
     futures_util::stream::StreamExt,
+    html2text::render::text_renderer::TrivialDecorator,
     image::io::Reader as ImageReader,
     lru::LruCache,
     std::{io::Cursor, num::NonZeroU16, rc::Rc, time::Instant},
@@ -29,7 +30,7 @@ pub struct ContentCache {
 
 impl ContentCache {
     pub fn new(capacity: NonZeroU16, max_file_size: ByteUnit) -> Self {
-        let capacity = capacity.try_into().unwrap();
+        let capacity = capacity.into();
 
         Self {
             lru: LruCache::new(capacity),
@@ -94,12 +95,15 @@ impl ContentCache {
         url: &str,
         text_generation: &mut TextGeneration,
         image_to_text: &mut ImageToText,
-    ) -> anyhow::Result<Rc<Content>> {
+    ) -> Rc<Content> {
         if let Some(content) = self.get(url) {
-            return Ok(content);
+            return content;
         }
 
-        self.download_url(url, text_generation, image_to_text).await
+        match self.download_url(url, text_generation, image_to_text).await {
+            Ok(content) => content,
+            Err(error) => self.insert(url, Content::unknown(format!("{error}"))),
+        }
     }
 }
 
@@ -132,7 +136,7 @@ impl Content {
         _text_generation: &mut TextGeneration,
         image_to_text: &mut ImageToText,
     ) -> anyhow::Result<Self> {
-        let content_type = content_inspector::inspect(&bytes);
+        let content_type = content_inspector::inspect(bytes);
 
         if content_type.is_text() {
             Self::from_html(bytes).or_else(|_error| Self::from_text(bytes))
@@ -151,9 +155,13 @@ impl Content {
     }
 
     fn from_html(bytes: &[u8]) -> anyhow::Result<Self> {
-        let string = html2text::config::plain().string_from_read(Cursor::new(bytes), usize::MAX)?;
+        let string = html2text::from_read_with_decorator(
+            Cursor::new(bytes),
+            usize::MAX,
+            TrivialDecorator::new(),
+        );
 
-        Ok(Self::html(format!("The website contents: {string}")))
+        Ok(Self::html(string))
     }
 
     fn from_image(bytes: &[u8], image_to_text: &mut ImageToText) -> anyhow::Result<Self> {
@@ -175,9 +183,9 @@ impl Content {
             .broadcast_sub(&mean)?
             .broadcast_div(&std)?;
 
-        let summary = image_to_text.generate(&image, &Device::Cpu)?;
+        let summary = image_to_text.generate(&image, &Device::new_cuda(0)?)?;
 
-        Ok(Self::image(format!("The image is {summary}")))
+        Ok(Self::image(summary))
     }
 
     pub fn kind(&self) -> ContentKind {

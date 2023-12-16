@@ -45,7 +45,7 @@ impl Clyde {
         let text_generation = text_generation::TextGeneration::new(model, tokenizer);
 
         let tokenizer = vision.model.load_tokenizer()?;
-        let model = vision.model.load_model(&Device::Cpu)?;
+        let model = vision.model.load_model(&Device::new_cuda(0)?)?;
         let image_to_text = ImageToText::new(model, tokenizer);
 
         Ok(Self {
@@ -95,6 +95,10 @@ impl Clyde {
     }
 
     pub async fn process_message(&mut self, message: &Message) -> anyhow::Result<()> {
+        let Some(current_user) = self.cache.current_user() else {
+            return Ok(());
+        };
+
         if !self.should_reply(message) {
             return Ok(());
         }
@@ -105,30 +109,75 @@ impl Clyde {
         for message_id in message_ids.iter().copied() {
             let message = self.cache.message(message_id).unwrap();
             let content = message.content();
-            let user = self.cache.user(message.author()).unwrap();
-            let name = user.name.as_str();
+            let author_id = message.author();
 
-            write!(prompt, "{name}: {content}\n")?;
+            if author_id == current_user.id {
+                write!(prompt, "<|assistant|>\nClyde: {content}<|assistant|>\n")?;
+
+                continue;
+            }
+
+            let author = self.cache.user(author_id).unwrap();
+            let name = author.global_name.as_deref().unwrap_or(&author.name);
+
+            write!(prompt, "<|user|>\n{name}: {content}<|endoftext|>\n")?;
+
+            if let Some(hash) = author.avatar {
+                let url =
+                    format!("https://cdn.discordapp.com/avatars/{author_id}/{hash}.webp?size=80");
+
+                let content = self
+                    .content_cache
+                    .fetch_url(&url, &mut self.text_generation, &mut self.image_to_text)
+                    .await;
+
+                let summary = content.summary();
+
+                write!(
+                    prompt,
+                    "<|user|>\n{url}: Avatar is {summary}<|endoftext|>\n"
+                )?;
+            }
+
+            for attachment in message.attachments() {
+                let url = &attachment.proxy_url;
+                let content = self
+                    .content_cache
+                    .fetch_url(url, &mut self.text_generation, &mut self.image_to_text)
+                    .await;
+
+                let summary = content.summary();
+
+                write!(
+                    prompt,
+                    "<|user|>\n{url}: Attachment is {summary}<|endoftext|>\n"
+                )?;
+            }
 
             for url in urls(content) {
                 let content = self
                     .content_cache
                     .fetch_url(url, &mut self.text_generation, &mut self.image_to_text)
-                    .await?;
+                    .await;
 
                 let summary = content.summary();
 
-                write!(prompt, "{url}: {summary}\n")?;
+                write!(prompt, "<|user|>\n{url}: URL is {summary}<|endoftext|>\n")?;
             }
         }
 
+        write!(prompt, "<|assistant|>\nClyde:")?;
+
         let response = self.text_generation.generate(&prompt)?;
-        let response = response.trim();
+
+        if response.is_empty() {
+            return Ok(());
+        }
 
         let Ok(create_message) = self
             .rest
             .create_message(message.channel_id)
-            .content(response)
+            .content(&response)
         else {
             return Ok(());
         };
@@ -139,7 +188,7 @@ impl Clyde {
     }
 }
 
-fn urls<'a>(string: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+fn urls(string: &str) -> impl Iterator<Item = &str> {
     let mut options = linkify::LinkFinder::new();
 
     options.kinds(&[linkify::LinkKind::Url]);
@@ -163,6 +212,4 @@ async fn main() -> anyhow::Result<()> {
 
         clyde.process_message(&message).await?;
     }
-
-    Ok(())
 }
