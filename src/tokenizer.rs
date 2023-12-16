@@ -14,7 +14,7 @@ pub struct Tokenizer {
 }
 
 pub struct Tokens {
-    encoding: tokenizers::Encoding,
+    pub(crate) encoding: tokenizers::Encoding,
 }
 
 impl Tokenizer {

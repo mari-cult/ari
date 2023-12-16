@@ -6,10 +6,9 @@ use {
 pub struct TextGeneration {
     logits_processor: LogitsProcessor,
     model: LanguageModel,
-    repeat_penalty: f32,
     repeat_last_n: usize,
+    repeat_penalty: f32,
     tokenizer: Tokenizer,
-    tokens: Vec<u32>,
 }
 
 impl TextGeneration {
@@ -17,38 +16,41 @@ impl TextGeneration {
         Self {
             logits_processor: LogitsProcessor::new(0, Some(0.2), None),
             model,
-            repeat_penalty: 1.2,
             repeat_last_n: 64,
+            repeat_penalty: 1.2,
             tokenizer,
-            tokens: Vec::new(),
         }
     }
 
     pub fn generate(&mut self, input: &str) -> anyhow::Result<String> {
-        let input = self.tokenizer.tokenize(input)?;
+        let Self {
+            logits_processor,
+            model,
+            repeat_last_n,
+            repeat_penalty,
+            tokenizer,
+        } = self;
 
-        self.tokens.extend(input.tokens().iter().copied());
+        let mut tokens = tokenizer.tokenize(input)?.tokens().to_vec();
 
         for index in 0..50 {
-            let context_len = if index > 0 { 1 } else { self.tokens.len() };
-            let position = self.tokens.len().saturating_sub(context_len);
-            let input = &self.tokens[position..];
-            let logits = self.model.forward(input, 0)?;
+            let context_len = if index > 0 { 1 } else { tokens.len() };
+            let position = tokens.len().saturating_sub(context_len);
+            let input = &tokens[position..];
 
-            let logits = if self.repeat_penalty == 1.0 {
+            let logits = model.forward(input, 0)?;
+            let logits = if *repeat_penalty == 1.0 {
                 logits
             } else {
-                let start_at = self.tokens.len().saturating_sub(self.repeat_last_n);
+                let start_at = tokens.len().saturating_sub(*repeat_last_n);
 
-                utils::apply_repeat_penalty(&logits, self.repeat_penalty, &self.tokens[start_at..])?
+                utils::apply_repeat_penalty(&logits, *repeat_penalty, &tokens[start_at..])?
             };
 
-            let next_token = self.logits_processor.sample(&logits)?;
-
-            self.tokens.push(next_token);
+            tokens.push(logits_processor.sample(&logits)?);
         }
 
-        let string = self.tokenizer.decode(&self.tokens)?;
+        let string = tokenizer.decode(&tokens)?;
 
         Ok(string)
     }

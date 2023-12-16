@@ -1,0 +1,8 @@
+[discord]
+token = "MTExNjwoah_token.G2bJFH.W9TinsaneENI"
+
+[language]
+model = "stablelm-4e1t-3b"
+
+[vision]
+model = "blip-large"
