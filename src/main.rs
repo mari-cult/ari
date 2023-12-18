@@ -46,7 +46,7 @@ impl Clyde {
         let text_generation = text_generation::TextGeneration::new(model, tokenizer);
 
         let tokenizer = vision.model.load_tokenizer()?;
-        let model = vision.model.load_model(&Device::new_cuda(0)?)?;
+        let model = vision.model.load_model(&Device::cuda_if_available(0)?)?;
         let image_to_text = ImageToText::new(model, tokenizer);
 
         Ok(Self {
