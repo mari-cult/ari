@@ -1,7 +1,7 @@
 use {
     crate::{content::ContentCache, image_to_text::ImageToText, text_generation::TextGeneration},
     candle_core::Device,
-    std::fmt::Write,
+    std::{fmt::Write, sync::Arc},
     twilight_cache_inmemory::InMemoryCache,
     twilight_gateway::{Event, Intents, Shard as Gateway, ShardId},
     twilight_http::Client as Rest,
@@ -29,7 +29,7 @@ pub struct Clyde {
     gateway: twilight_gateway::Shard,
     image_to_text: ImageToText,
     rest: twilight_http::Client,
-    text_generation: TextGeneration,
+    text_generation: Arc<std::sync::Mutex<TextGeneration>>,
 }
 
 impl Clyde {
@@ -43,7 +43,9 @@ impl Clyde {
 
         let tokenizer = language.model.load_tokenizer()?;
         let model = language.model.load_model(&Device::Cpu)?;
-        let text_generation = text_generation::TextGeneration::new(model, tokenizer);
+        let text_generation = Arc::new(std::sync::Mutex::new(
+            text_generation::TextGeneration::new(model, tokenizer),
+        ));
 
         let tokenizer = vision.model.load_tokenizer()?;
         let model = vision.model.load_model(&Device::cuda_if_available(0)?)?;
@@ -115,6 +117,7 @@ impl Clyde {
         let mut prompt = String::new();
         let message_ids = self.cache.channel_messages(message.channel_id).unwrap();
 
+        let mut text_generation_lock = self.text_generation.lock().unwrap();
         for message_id in message_ids.iter().copied() {
             let message = self.cache.message(message_id).unwrap();
             let content = message.content();
@@ -137,7 +140,7 @@ impl Clyde {
 
                 let content = self
                     .content_cache
-                    .fetch_url(&url, &mut self.text_generation, &mut self.image_to_text)
+                    .fetch_url(&url, &mut text_generation_lock, &mut self.image_to_text)
                     .await;
 
                 let summary = content.summary();
@@ -152,7 +155,7 @@ impl Clyde {
                 let url = &attachment.proxy_url;
                 let content = self
                     .content_cache
-                    .fetch_url(url, &mut self.text_generation, &mut self.image_to_text)
+                    .fetch_url(url, &mut text_generation_lock, &mut self.image_to_text)
                     .await;
 
                 let summary = content.summary();
@@ -170,7 +173,7 @@ impl Clyde {
 
                         let content = self
                             .content_cache
-                            .fetch_url(&url, &mut self.text_generation, &mut self.image_to_text)
+                            .fetch_url(&url, &mut text_generation_lock, &mut self.image_to_text)
                             .await;
 
                         let summary = content.summary();
@@ -187,7 +190,7 @@ impl Clyde {
             for url in urls(content) {
                 let content = self
                     .content_cache
-                    .fetch_url(url, &mut self.text_generation, &mut self.image_to_text)
+                    .fetch_url(url, &mut text_generation_lock, &mut self.image_to_text)
                     .await;
 
                 let summary = content.summary();
@@ -195,10 +198,15 @@ impl Clyde {
                 write!(prompt, "<|user|>\n{url}: URL is {summary}<|endoftext|>\n")?;
             }
         }
+        drop(text_generation_lock);
 
         write!(prompt, "<|assistant|>\nClyde:")?;
 
-        let response = self.text_generation.generate(&prompt)?;
+        let cloned_text_generation = Arc::clone(&self.text_generation);
+        let response = tokio::task::spawn_blocking(move || {
+            cloned_text_generation.lock().unwrap().generate(&prompt)
+        })
+        .await??;
 
         if response.is_empty() {
             return Ok(());
@@ -212,7 +220,7 @@ impl Clyde {
             return Ok(());
         };
 
-        create_message.await?;
+        create_message.await;
 
         Ok(())
     }
@@ -229,17 +237,18 @@ fn urls(string: &str) -> impl Iterator<Item = &str> {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let mut clyde = Clyde::new()?;
+    let clyde = tokio::sync::Mutex::new(Clyde::new()?);
 
     loop {
-        let event = clyde.next_event().await?;
+        let mut locked_clyde = clyde.lock().await;
+        let event = locked_clyde.next_event().await?;
 
-        clyde.cache.update(&event);
+        locked_clyde.cache.update(&event);
 
         let Event::MessageCreate(message) = event else {
             continue;
         };
 
-        clyde.process_message(&message).await?;
+        locked_clyde.process_message(&message).await?;
     }
 }
