@@ -220,7 +220,7 @@ impl Clyde {
             return Ok(());
         };
 
-        create_message.await;
+        create_message.await?;
 
         Ok(())
     }
