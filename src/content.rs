@@ -183,7 +183,7 @@ impl Content {
             .broadcast_sub(&mean)?
             .broadcast_div(&std)?;
 
-        let summary = image_to_text.generate(&image, &Device::new_cuda(0)?)?;
+        let summary = image_to_text.generate(&image, &Device::cuda_if_available(0)?)?;
 
         Ok(Self::image(summary))
     }
