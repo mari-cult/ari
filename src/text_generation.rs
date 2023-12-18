@@ -62,7 +62,7 @@ impl TextGeneration {
         let logits = model.forward(&prompt, 0)?;
         let mut tokens = vec![logits_processor.sample(&logits)?];
 
-        for index in 0..50 {
+        for index in 0..1000 {
             let input = slice::from_ref(tokens.last().unwrap());
             let string = tokenizer.decode(input)?;
 
@@ -87,12 +87,18 @@ impl TextGeneration {
                 break;
             }
 
+            // FIXME
             let string = tokenizer.decode(&tokens)?;
 
-            if string.contains("<|assistant|>") || string.contains("Clyde:") {
+            if string.contains("<|assistant|>")
+                || string.contains("<|endoftext|>")
+                || string.contains("Clyde:")
+            {
                 break;
             }
         }
+
+        model.reset();
 
         // TODO: make this not dumb
         let string = tokenizer.decode(&tokens)?;
@@ -100,6 +106,8 @@ impl TextGeneration {
         let string = string.strip_suffix("Clyde:").unwrap_or(string);
         let string = string.trim();
         let string = string.strip_suffix("<|assistant|>").unwrap_or(string);
+        let string = string.trim();
+        let string = string.strip_suffix("<|endoftext|>").unwrap_or(string);
         let string = string.trim();
 
         let elapsed = start.elapsed();

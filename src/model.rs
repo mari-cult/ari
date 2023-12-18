@@ -64,6 +64,9 @@ pub enum LanguageModelType {
 
     #[serde(rename = "stablelm-zephyr-3b")]
     StableLmZephyr3b,
+
+    #[serde(rename = "stablelm-zephyr-3b-q4")]
+    StableLmZephyr3bQ4,
 }
 
 pub enum VisionModel {
@@ -96,6 +99,7 @@ impl LanguageModelType {
             Self::Phi2_2_7b => "microsoft/phi-2",
             Self::StableLm4e1t3b | Self::StableLm4e1t3bQ4 => "lmz/candle-stablelm-3b-4e1t",
             Self::StableLmZephyr3b => "stabilityai/stablelm-zephyr-3b",
+            Self::StableLmZephyr3bQ4 => "TheBloke/stablelm-zephyr-3b-GGUF",
         }
     }
 
@@ -113,6 +117,7 @@ impl LanguageModelType {
             Self::PuffinPhi2_2_7b => &["model-puffin-phi-v2.safetensors"],
             Self::PuffinPhi2_2_7bQ4 => &["model-puffin-phi-v2-q4k.gguf"],
             Self::StableLm4e1t3bQ4 => &["model-q4k.gguf"],
+            Self::StableLmZephyr3bQ4 => &["stablelm-zephyr-3b.Q4_K_M.gguf"],
             _ => &["model.safetensors"],
         }
     }
@@ -130,7 +135,7 @@ impl LanguageModelType {
             Self::Phi1_5_1_3b => "microsoft/phi-1_5",
             Self::Phi2_2_7b => "microsoft/phi-2",
             Self::StableLm4e1t3b | Self::StableLm4e1t3bQ4 => "lmz/candle-stablelm-3b-4e1t",
-            Self::StableLmZephyr3b => "stabilityai/stablelm-zephyr-3b",
+            Self::StableLmZephyr3b | Self::StableLmZephyr3bQ4 => "stabilityai/stablelm-zephyr-3b",
         }
     }
 
@@ -149,13 +154,17 @@ impl LanguageModelType {
                 | Self::Phi1_5_1_3bQ4
                 | Self::Phi2_2_7bQ4
                 | Self::StableLm4e1t3bQ4
+                | Self::StableLmZephyr3bQ4
         )
     }
 
     pub fn is_stable_lm(&self) -> bool {
         matches!(
             self,
-            Self::StableLm4e1t3b | Self::StableLm4e1t3bQ4 | Self::StableLmZephyr3b
+            Self::StableLm4e1t3b
+                | Self::StableLm4e1t3bQ4
+                | Self::StableLmZephyr3b
+                | Self::StableLmZephyr3bQ4
         )
     }
 
@@ -206,7 +215,7 @@ impl LanguageModelType {
     pub fn load_model(&self, device: &Device) -> anyhow::Result<LanguageModel> {
         let paths = self.fetch_model()?;
         let dtype = if device.is_cuda() {
-            DType::BF16
+            DType::F16
         } else {
             DType::F16
         };
@@ -254,6 +263,13 @@ impl LanguageModelType {
 }
 
 impl LanguageModel {
+    pub fn reset(&mut self) {
+        match self {
+            Self::StableLm(model) => model.reset_kv_cache(),
+            _ => {}
+        }
+    }
+
     pub fn forward(&mut self, input: &[u32], position: usize) -> anyhow::Result<Tensor> {
         fn stable_lm(tensor: Tensor) -> anyhow::Result<Tensor> {
             Ok(tensor.squeeze(0)?.squeeze(0)?.to_dtype(DType::F32)?)

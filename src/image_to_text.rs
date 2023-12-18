@@ -49,6 +49,7 @@ impl ImageToText {
         }
 
         model.reset();
+
         let string = tokenizer.decode(&tokens)?;
         let elapsed = start.elapsed();
 

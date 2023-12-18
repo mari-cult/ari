@@ -5,9 +5,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = { version = "1.0.75", default-features = false, features = ["std"] }
-candle-core = { git = "https://github.com/huggingface/candle", version = "0.3.1", default-features = false }
-candle-nn = { git = "https://github.com/huggingface/candle", version = "0.3.1", default-features = false }
-candle-transformers = { git = "https://github.com/huggingface/candle", version = "0.3.1", default-features = false }
+candle-core = { git = "https://github.com/kalmari246/candle", rev = "8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1", version = "0.3.2", default-features = false }
+candle-nn = { git = "https://github.com/kalmari246/candle", rev = "8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1", version = "0.3.2", default-features = false }
+candle-transformers = { git = "https://github.com/kalmari246/candle", rev = "8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1", version = "0.3.2", default-features = false }
 content_inspector = { version = "0.2.4", default-features = false }
 futures-util = { version = "0.3.29", default-features = false, features = ["std"] }
 hf-hub = { version = "0.3.2", default-features = false, features = ["online", "tokio"] }
@@ -34,4 +34,5 @@ twilight-util = { version = "0.15.4", default-features = false, features = ["bui
 ubyte = { version = "0.10.4", default-features = false, features = ["serde"] }
 
 [features]
-cuda = ["candle-core/cuda", "candle-transformers/cuda"]
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+flash-attention = ["candle-transformers/flash-attn"]

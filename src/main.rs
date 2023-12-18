@@ -5,6 +5,7 @@ use {
     twilight_cache_inmemory::InMemoryCache,
     twilight_gateway::{Event, Intents, Shard as Gateway, ShardId},
     twilight_http::Client as Rest,
+    twilight_mention::{parse::MentionType, ParseMention},
     twilight_model::{
         channel::Message,
         id::{marker::ChannelMarker, Id},
@@ -152,6 +153,27 @@ impl Clyde {
                     prompt,
                     "<|user|>\n{url}: Attachment is {summary}<|endoftext|>\n"
                 )?;
+            }
+
+            for mention in MentionType::iter(content) {
+                match mention {
+                    (MentionType::Emoji(emoji_id), _, _) => {
+                        let url = format!("https://cdn.discordapp.com/emojis/{emoji_id}.webp");
+
+                        let content = self
+                            .content_cache
+                            .fetch_url(&url, &mut self.text_generation, &mut self.image_to_text)
+                            .await;
+
+                        let summary = content.summary();
+
+                        write!(
+                            prompt,
+                            "<|user|>\n{emoji_id}: Emoji is {summary}<|endoftext|>\n"
+                        )?;
+                    }
+                    _ => {}
+                }
             }
 
             for url in urls(content) {

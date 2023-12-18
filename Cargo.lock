@@ -197,8 +197,8 @@ checksum = "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223"
 
 [[package]]
 name = "candle-core"
-version = "0.3.1"
-source = "git+https://github.com/huggingface/candle#e60f9b5dfcab05db8c3c2dbf55fb52f10188aa02"
+version = "0.3.2"
+source = "git+https://github.com/kalmari246/candle?rev=8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1#8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1"
 dependencies = [
  "byteorder",
  "candle-kernels",
@@ -218,9 +218,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "candle-flash-attn"
+version = "0.3.2"
+source = "git+https://github.com/kalmari246/candle?rev=8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1#8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "half",
+ "num_cpus",
+ "rayon",
+]
+
+[[package]]
 name = "candle-kernels"
-version = "0.3.1"
-source = "git+https://github.com/huggingface/candle#e60f9b5dfcab05db8c3c2dbf55fb52f10188aa02"
+version = "0.3.2"
+source = "git+https://github.com/kalmari246/candle?rev=8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1#8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1"
 dependencies = [
  "anyhow",
  "glob",
@@ -229,8 +241,8 @@ dependencies = [
 
 [[package]]
 name = "candle-nn"
-version = "0.3.1"
-source = "git+https://github.com/huggingface/candle#e60f9b5dfcab05db8c3c2dbf55fb52f10188aa02"
+version = "0.3.2"
+source = "git+https://github.com/kalmari246/candle?rev=8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1#8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1"
 dependencies = [
  "candle-core",
  "half",
@@ -243,11 +255,12 @@ dependencies = [
 
 [[package]]
 name = "candle-transformers"
-version = "0.3.1"
-source = "git+https://github.com/huggingface/candle#e60f9b5dfcab05db8c3c2dbf55fb52f10188aa02"
+version = "0.3.2"
+source = "git+https://github.com/kalmari246/candle?rev=8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1#8dabaecc9eba291bbb96ed2290f5d4bf9aa3c8a1"
 dependencies = [
  "byteorder",
  "candle-core",
+ "candle-flash-attn",
  "candle-nn",
  "num-traits",
  "rand",
