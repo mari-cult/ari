@@ -52,7 +52,15 @@ impl Clyde {
         Ok(Self {
             cache: InMemoryCache::new(),
             content_cache: ContentCache::new(cache.max_entries, cache.max_file_size),
-            gateway: Gateway::new(ShardId::ONE, discord.token.clone(), Intents::all()),
+            gateway: Gateway::new(
+                ShardId::ONE,
+                discord.token.clone(),
+                Intents::GUILDS
+                    | Intents::GUILD_MEMBERS
+                    | Intents::GUILD_MESSAGES
+                    | Intents::DIRECT_MESSAGES
+                    | Intents::MESSAGE_CONTENT,
+            ),
             image_to_text,
             rest: Rest::new(discord.token.clone()),
             text_generation,
