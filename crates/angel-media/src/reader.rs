@@ -80,6 +80,12 @@ impl Reader {
     }
 }
 
+impl Read for Reader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.read(buf)
+    }
+}
+
 impl fmt::Debug for Reader {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Reader")
