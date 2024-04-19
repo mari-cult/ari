@@ -1,0 +1,8 @@
+[package]
+name = "discord-content"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+hyphenation = { version = "0.8.4", default-features = false, features = ["embed_en-us", "nfc"] }
+textwrap = { version = "0.16.1", default-features = false, features = ["hyphenation", "smawk", "unicode-linebreak", "unicode-width"] }
