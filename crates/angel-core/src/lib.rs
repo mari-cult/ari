@@ -3,14 +3,14 @@ use {
     base64::{engine::general_purpose::STANDARD, Engine},
     dashmap::DashMap,
     futures_util::StreamExt,
-    image::{DynamicImage, ImageFormat},
+    image::{io::Reader as ImageReader, DynamicImage, Frame, ImageFormat, ImageResult},
     ollama_rs::{
         generation::{completion::request::GenerationRequest, images::Image},
         Ollama,
     },
     reqwest::Client as Http,
     serde::Deserialize,
-    std::io,
+    std::io::{self, Read},
     tokio::{sync::mpsc, task},
     tokio_stream::wrappers::UnboundedReceiverStream,
     tokio_util::io::{StreamReader, SyncIoBridge},
@@ -18,10 +18,18 @@ use {
 
 pub use angel_media as media;
 
+const DESCRIBE_IMAGE: &str =
+    r#"Describe this image in JSON verbatim: {"description": string, "confidence": f32}: "#;
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct ImageResponse {
     pub description: String,
     pub confidence: f32,
+}
+
+enum Either {
+    Image(ImageResult<DynamicImage>),
+    Frame(ImageResult<Frame>),
 }
 
 pub struct Core {
@@ -41,31 +49,41 @@ impl Core {
         }
     }
 
-    /// Generate a description for the provided image.
-    pub async fn describe_image(&self, image: DynamicImage) -> anyhow::Result<ImageResponse> {
-        let mut cursor = io::Cursor::new(Vec::new());
+    pub async fn generate(
+        &self,
+        prompt: &str,
+        image: Option<DynamicImage>,
+    ) -> anyhow::Result<String> {
+        let mut request = GenerationRequest::new(self.model.clone(), prompt.into());
 
-        image.write_to(&mut cursor, ImageFormat::Png)?;
+        if let Some(image) = image {
+            let mut cursor = io::Cursor::new(Vec::new());
 
-        let base64 = STANDARD.encode(cursor.into_inner());
-        let image = Image::from_base64(&base64);
-        let request = GenerationRequest::new(
-            self.model.clone(),
-            String::from(r#"Describe this image in JSON verbatim: {"description": string, "confidence": f32}: "#),
-        )
-        .add_image(image);
+            image.write_to(&mut cursor, ImageFormat::Png)?;
 
-        let json = self
+            let base64 = STANDARD.encode(cursor.into_inner());
+            let image = Image::from_base64(&base64);
+
+            request = request.add_image(image);
+        }
+
+        let response = self
             .ollama
             .generate(request)
             .await
             .map_err(anyhow::Error::msg)?
-            .response;
+            .response
+            .trim()
+            .to_string();
 
-        let json = json.trim();
-        let json = json.strip_prefix("```json").unwrap_or(json);
+        Ok(response)
+    }
+
+    /// Generate a description for the provided image.
+    pub async fn describe_image(&self, image: DynamicImage) -> anyhow::Result<ImageResponse> {
+        let json = self.generate(DESCRIBE_IMAGE, Some(image)).await?;
+        let json = json.strip_prefix("```json").unwrap_or(&json);
         let json = json.strip_suffix("```").unwrap_or(json);
-
         let response: ImageResponse = serde_json::from_str(json)?;
 
         Ok(response)
@@ -89,10 +107,29 @@ impl Core {
 
         let _handle = task::spawn_blocking(move || {
             while reader.buffer().len() < 4096 {
-                reader.read_buf()?;
+                Reader::read_buf(&mut reader)?;
             }
 
-            let format = MediaFormat::guess(reader.buffer())?;
+            let bytes = reader.buffer();
+            let image_format = ImageReader::new(io::Cursor::new(bytes))
+                .with_guessed_format()
+                .ok()
+                .and_then(|reader| reader.format());
+
+            // FIXME: FFmpeg chews 100% CPU util with image input.
+            if let Some(image_format) = image_format {
+                let mut buf = Vec::new();
+
+                reader.read_to_end(&mut buf)?;
+
+                let result = ImageReader::with_format(io::Cursor::new(buf), image_format).decode();
+
+                sender.send(Either::Image(result))?;
+
+                return Ok(());
+            }
+
+            let format = MediaFormat::guess(bytes)?;
             let mut context = Context::new()?;
 
             context.set_reader(reader)?;
@@ -102,7 +139,7 @@ impl Core {
             for frame in media_source.video()? {
                 tracing::debug!("send frame");
 
-                sender.send(frame)?;
+                sender.send(Either::Frame(frame))?;
 
                 tracing::debug!("sent frame");
             }
@@ -117,7 +154,12 @@ impl Core {
         while let Some((index, frame)) = stream.next().await {
             tracing::debug!("received frame");
 
-            let frame = frame?.into_buffer();
+            let frame = match frame {
+                Either::Image(image) => {
+                    return self.generate("Describe this image.", Some(image?)).await;
+                }
+                Either::Frame(frame) => frame?.into_buffer(),
+            };
 
             if let Some(last_frame) = last_frame.replace(frame.clone()) {
                 let score = image_compare::rgba_hybrid_compare(&last_frame, &frame)?.score;
@@ -152,17 +194,8 @@ impl Core {
 
         let frames = frames.join(" ");
         let prompt = format!("The following is a description of unique frames in a video, write a concise summmary: {frames}");
-        let request = GenerationRequest::new(self.model.clone(), prompt);
-        let summary = self
-            .ollama
-            .generate(request)
-            .await
-            .map_err(anyhow::Error::msg)?
-            .response
-            .trim()
-            .to_string();
 
-        Ok(summary)
+        self.generate(&prompt, None).await
     }
 
     /// Generate a description of the provided URL.
