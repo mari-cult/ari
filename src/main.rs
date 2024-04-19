@@ -189,7 +189,7 @@ impl State {
             };
 
             let chat_message = if author_id == current_user.id {
-                ChatMessage::assistant(content)
+                ChatMessage::assistant(format!("Clyde: {content}"))
             } else {
                 let Some(author) = cache.user(author_id) else {
                     continue;
