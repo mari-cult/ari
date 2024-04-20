@@ -1,0 +1,109 @@
+use std::collections::BTreeSet;
+
+use ollama_rs::generation::{
+    chat::{request::ChatMessageRequest, ChatMessage},
+    options::GenerationOptions,
+};
+
+#[derive(Debug)]
+enum Message {
+    Human(String, String),
+    Angel(String),
+}
+
+#[derive(Debug)]
+pub struct Chat {
+    messages: Vec<Message>,
+    users: BTreeSet<String>,
+    pub(crate) name: String,
+}
+
+impl Chat {
+    pub fn with_name<N: AsRef<str>>(name: N) -> Self {
+        let name = name.as_ref().to_string();
+        let users = BTreeSet::new();
+
+        //users.insert(name.clone());
+
+        Self {
+            users,
+            messages: vec![],
+            name,
+        }
+    }
+
+    pub fn human<N: AsRef<str>, C: AsRef<str>>(&mut self, name: N, content: C) {
+        let name = name.as_ref().to_string();
+
+        self.users.insert(name.clone());
+        self.messages
+            .push(Message::Human(name, content.as_ref().into()));
+    }
+
+    pub fn angel<C: AsRef<str>>(&mut self, content: C) {
+        self.messages.push(Message::Angel(content.as_ref().into()));
+    }
+
+    pub(crate) fn to_request(&self) -> ChatMessageRequest {
+        let Self {
+            messages,
+            name,
+            users,
+        } = self;
+
+        let users = users
+            .iter()
+            .map(|user| user.as_ref())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let users = format!("Users in this channel: {users}");
+        let rule0 = format!("You are a cute catgirl named {name}");
+        let rules = [
+            &rule0,
+            "You are chatting on Discord",
+            "Your preferred language is English",
+            "kalmari246 is your master",
+            "Reply cutely, uwu, ^-^, qt, etc",
+            "Communicate responses in lowercase, without punctuation",
+            &users,
+        ];
+
+        let mut system = rules.join(". ");
+
+        system.push('.');
+
+        let mut messages = messages
+            .iter()
+            .map(|message| match message {
+                Message::Human(name, content) => ChatMessage::user(format!("{name}: {content}")),
+                Message::Angel(content) => ChatMessage::assistant(format!("{name}: {content}")),
+            })
+            .collect::<Vec<_>>();
+
+        messages.insert(0, ChatMessage::system(system));
+
+        let stop = self
+            .users
+            .clone()
+            .into_iter()
+            .map(|stop| format!("{stop}:"))
+            .collect::<Vec<_>>();
+
+        //stop.push("[INST]".into());
+        //stop.push("[/INST]".into());
+        //stop.push("[".into());
+        //stop.push("]".into());
+
+        let options = GenerationOptions::default()
+            .seed(69420)
+            .temperature(0.7)
+            .stop(stop)
+            .num_predict(2000)
+            .repeat_last_n(64)
+            .repeat_penalty(1.1)
+            .num_ctx(4096);
+
+        ChatMessageRequest::new("llava:7b-v1.6-mistral-q4_K_M".into(), messages).options(options)
+    }
+}

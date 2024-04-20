@@ -7,7 +7,6 @@ edition = "2021"
 angel-core = { version = "0.1.0", path = "crates/angel-core", default-features = false }
 anyhow = { version = "1.0.81", default-features = false, features = ["std"] }
 discord-content = { version = "0.0.0", path = "crates/discord-content", default-features = false }
-ollama-rs = { version = "0.1.9", default-features = false }
 tokio = { version = "1.37.0", default-features = false, features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { version = "0.1.40", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["ansi", "env-filter"] }
