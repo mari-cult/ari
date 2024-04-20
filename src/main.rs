@@ -1,10 +1,6 @@
 use {
-    angel_core::Core,
+    angel_core::{Chat, Core},
     discord_content::MessageSplitter,
-    ollama_rs::{
-        generation::chat::{request::ChatMessageRequest, ChatMessage},
-        Ollama as Llm,
-    },
     std::{env, sync::Arc},
     tokio::sync::Mutex,
     twilight_cache_inmemory::DefaultInMemoryCache as Cache,
@@ -27,16 +23,14 @@ pub struct State {
     core: Core,
     cache: Cache,
     gateway: Mutex<Gateway>,
-    llm: Llm,
     rest: Rest,
     message_splitter: MessageSplitter,
 }
 
 impl State {
     pub fn new(token: String) -> anyhow::Result<Arc<Self>> {
-        let llm = Llm::default();
         let core = Core::new();
-        let cache = Cache::builder().message_cache_size(10).build();
+        let cache = Cache::builder().message_cache_size(100).build();
         let config = ConfigBuilder::new(String::from(&token), Intents::all())
             .presence(dnd(String::from("im clyde")))
             .build();
@@ -48,7 +42,6 @@ impl State {
             cache,
             gateway,
             rest,
-            llm,
             message_splitter: MessageSplitter::new(),
         }))
     }
@@ -81,7 +74,6 @@ impl State {
     async fn process_message(self: &Arc<Self>, message: Message) -> anyhow::Result<()> {
         let Self {
             cache,
-            llm,
             rest,
             message_splitter,
             ..
@@ -154,16 +146,7 @@ impl State {
 
         rest.create_typing_trigger(message.channel_id).await?;
 
-        let rules = [
-            "You are named Clyde - and is currently chatting in a Discord server",
-            //"You are extremely racist, like a 4chan /pol/ user",
-            "Do not talk about yourself in third person",
-            "Do not refer to yourself as an AI, LLM, assistant",
-            "Communicate responses in lowercase, without punctuation",
-        ]
-        .join(". ");
-
-        let mut messages = vec![ChatMessage::system(rules)];
+        let mut chat = Chat::with_name("Clyde");
 
         for message_id in channel_messages.iter().copied().rev() {
             let Some(message) = cache.message(message_id) else {
@@ -171,45 +154,34 @@ impl State {
             };
 
             let author_id = message.author();
-            let mut attachments = String::new();
+            let Some(author) = cache.user(author_id) else {
+                continue;
+            };
+
+            let mut attachments = Vec::new();
 
             for attachment in message.attachments() {
                 let name = &attachment.filename;
                 let url = &attachment.url;
                 let description = self.core.describe_media(url).await?;
 
-                attachments.push_str(&format!("{name}: {description}"));
+                attachments.push(format!("{name}: {description}"));
             }
 
-            let content = message.content();
-            let content = if attachments.is_empty() {
-                content.to_string()
+            let mut content = message.content().to_string();
+
+            content.push_str(&attachments.join(" "));
+
+            if author_id == current_user.id {
+                chat.angel(content);
             } else {
-                format!("{content}\n{attachments}")
-            };
-
-            let chat_message = if author_id == current_user.id {
-                ChatMessage::assistant(format!("Clyde: {content}"))
-            } else {
-                let Some(author) = cache.user(author_id) else {
-                    continue;
-                };
-
-                let name = &author.name;
-
-                ChatMessage::user(format!("{name}: {content}"))
-            };
-
-            messages.push(chat_message);
+                chat.human(&author.name, content);
+            }
         }
 
-        let request = ChatMessageRequest::new("llava".into(), messages);
+        tracing::info!("{chat:#?}");
 
-        tracing::debug!("{request:#?}");
-
-        let response = llm.send_chat_messages(request).await?;
-        let content = response.message.unwrap().content;
-        let content = content.trim();
+        let content = self.core.chat(chat).await?;
 
         if content.is_empty() {
             return Ok(());
@@ -217,7 +189,7 @@ impl State {
 
         let mut reply_to = if is_a_dm { None } else { Some(message.id) };
 
-        for content in message_splitter.split(content) {
+        for content in message_splitter.split(&content) {
             let mut create_message = rest.create_message(message.channel_id).content(&content);
 
             if let Some(reply) = reply_to.take() {

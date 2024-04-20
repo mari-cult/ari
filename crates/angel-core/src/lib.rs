@@ -5,7 +5,9 @@ use {
     futures_util::StreamExt,
     image::{io::Reader as ImageReader, DynamicImage, Frame, ImageFormat, ImageResult},
     ollama_rs::{
-        generation::{completion::request::GenerationRequest, images::Image},
+        generation::{
+            completion::request::GenerationRequest, images::Image, options::GenerationOptions,
+        },
         Ollama,
     },
     reqwest::Client as Http,
@@ -16,7 +18,9 @@ use {
     tokio_util::io::{StreamReader, SyncIoBridge},
 };
 
-pub use angel_media as media;
+pub use {self::chat::Chat, angel_media as media};
+
+mod chat;
 
 const DESCRIBE_IMAGE: &str =
     r#"Describe this image in JSON verbatim: {"description": string, "confidence": f32}: "#;
@@ -44,9 +48,29 @@ impl Core {
         Self {
             http: Http::new(),
             ollama: Ollama::default(),
-            model: String::from("llava"),
+            model: String::from("llava:7b-v1.6-mistral-q4_K_M"),
             url_cache: DashMap::new(),
         }
+    }
+
+    pub async fn chat(&self, chat: Chat) -> anyhow::Result<String> {
+        let request = chat.to_request();
+        let response = self
+            .ollama
+            .send_chat_messages(request)
+            .await?
+            .message
+            .ok_or_else(|| anyhow::anyhow!("no response"))?
+            .content;
+
+        let response = response.trim();
+        let response = response
+            .strip_prefix(&format!("{}:", chat.name))
+            .unwrap_or(response)
+            .trim()
+            .into();
+
+        Ok(response)
     }
 
     pub async fn generate(
@@ -67,6 +91,16 @@ impl Core {
             request = request.add_image(image);
         }
 
+        let options = GenerationOptions::default()
+            .seed(69420)
+            .temperature(0.1)
+            .num_predict(4096)
+            .repeat_last_n(64)
+            .repeat_penalty(1.0)
+            .num_ctx(4096);
+
+        request = request.options(options);
+
         let response = self
             .ollama
             .generate(request)
@@ -74,7 +108,7 @@ impl Core {
             .map_err(anyhow::Error::msg)?
             .response
             .trim()
-            .to_string();
+            .into();
 
         Ok(response)
     }
