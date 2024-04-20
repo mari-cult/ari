@@ -83,7 +83,7 @@ impl Chat {
 
         messages.insert(0, ChatMessage::system(system));
 
-        let stop = self
+        let mut stop = self
             .users
             .clone()
             .into_iter()
@@ -92,7 +92,7 @@ impl Chat {
 
         //stop.push("[INST]".into());
         //stop.push("[/INST]".into());
-        //stop.push("[".into());
+        stop.push("[".into());
         //stop.push("]".into());
 
         let options = GenerationOptions::default()

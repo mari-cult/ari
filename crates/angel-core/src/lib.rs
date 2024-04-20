@@ -171,6 +171,10 @@ impl Core {
             let media_source = context.decode(format)?;
 
             for frame in media_source.video()? {
+                if frame.is_err() {
+                    break;
+                }
+
                 tracing::debug!("send frame");
 
                 sender.send(Either::Frame(frame))?;
