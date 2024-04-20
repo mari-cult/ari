@@ -260,6 +260,8 @@ impl MessageExt for Message {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv()?;
+
     tracing_subscriber::fmt::init();
     angel_core::media::ffmpeg::init()?;
 
