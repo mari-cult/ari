@@ -31,9 +31,16 @@ impl State {
     pub fn new(token: String) -> anyhow::Result<Arc<Self>> {
         let core = Core::new();
         let cache = Cache::builder().message_cache_size(100).build();
-        let config = ConfigBuilder::new(String::from(&token), Intents::all())
-            .presence(dnd(String::from("im clyde")))
-            .build();
+        let config = ConfigBuilder::new(
+            String::from(&token),
+            Intents::GUILDS
+                | Intents::GUILD_MEMBERS
+                | Intents::GUILD_MESSAGES
+                | Intents::DIRECT_MESSAGES
+                | Intents::MESSAGE_CONTENT,
+        )
+        .presence(dnd(String::from("im clyde")))
+        .build();
         let gateway = Mutex::new(Gateway::with_config(ShardId::ONE, config));
         let rest = Rest::new(token);
 
