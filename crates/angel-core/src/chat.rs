@@ -58,13 +58,9 @@ impl Chat {
             .join(", ");
 
         let users = format!("Users in this channel: {users}");
-        let rule0 = format!("You are a cute catgirl named {name}");
+        let rule0 = format!("You are named {name}");
         let rules = [
             &rule0,
-            "You are chatting on Discord",
-            "Your preferred language is English",
-            "kalmari246 is your master",
-            "Reply cutely, uwu, ^-^, qt, etc",
             "Communicate responses in lowercase, without punctuation",
             &users,
         ];
@@ -83,27 +79,6 @@ impl Chat {
 
         messages.insert(0, ChatMessage::system(system));
 
-        let mut stop = self
-            .users
-            .clone()
-            .into_iter()
-            .map(|stop| format!("{stop}:"))
-            .collect::<Vec<_>>();
-
-        //stop.push("[INST]".into());
-        //stop.push("[/INST]".into());
-        stop.push("[".into());
-        //stop.push("]".into());
-
-        let options = GenerationOptions::default()
-            .seed(69420)
-            .temperature(0.7)
-            .stop(stop)
-            .num_predict(2000)
-            .repeat_last_n(64)
-            .repeat_penalty(1.1)
-            .num_ctx(4096);
-
-        ChatMessageRequest::new("llava:7b-v1.6-mistral-q4_K_M".into(), messages).options(options)
+        ChatMessageRequest::new("llama3:instruct".into(), messages)
     }
 }
