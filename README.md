@@ -1,11 +1,9 @@
-I miss Clyde, so this is a reimplementation (with extras).
+<h1 align="center">Clyde</h1>
+<p align="center">LLM-powered Discord bot</p>
 
-Model: LLaVA v1.6 (Mistral) 4-bit K M quant. (`ollama pull llava:7b-v1.6-mistral-q4_K_M`)
+Originally started as a re-creation of Discord's discontinued ClydeAI experiment, but then multimodal support was added for fun, and IDK.
 
-The last 50 messages in a channel are passed.
+Uses Ollama for LLM inference as it works *fine* for low-VRAM systems.
 
-Images are a simple description.
-
-Videos are described by unique frames (Comparsion score above 0.28). The model outputs JSON, with `description`, and `confidence`, invalid JSON or confidence less than 0.5 is discarded. At most 10 descriptions are collected, then summarized.
-
-The final chat inference isn't multi-modal, as there is no visual forwarding, but it is still LLaVA, this has shown improved understanding, however (images aren't merged).
+- `llama3:instruct` for conversation.
+- `llava:7b-v1.6-mistral-q4_K_M` for image descriptions.
