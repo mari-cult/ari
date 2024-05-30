@@ -79,6 +79,6 @@ impl Chat {
 
         messages.insert(0, ChatMessage::system(system));
 
-        ChatMessageRequest::new("llama3:instruct".into(), messages)
+        ChatMessageRequest::new("llava-llama3".into(), messages)
     }
 }

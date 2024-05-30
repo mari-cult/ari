@@ -1,9 +1,18 @@
 <h1 align="center">Clyde</h1>
-<p align="center">LLM-powered Discord bot</p>
+<p align="center">A Discord chatbot</p>
 
-Originally started as a re-creation of Discord's discontinued ClydeAI experiment, but then multimodal support was added for fun, and IDK.
+A re-creation of Discord's discontinued [Clyde AI experiment](https://discord.fandom.com/wiki/Clyde_(chatbot)).
 
-Uses Ollama for LLM inference as it works *fine* for low-VRAM systems.
+# How use!?
 
-- `llama3:instruct` for conversation.
-- `llava:7b-v1.6-mistral-q4_K_M` for image descriptions.
+Install [Rust](https://rustup.rs/),a nd [Ollama](https://github.com/ollama/ollama), download the LLaVA LLama 3 model:
+
+```
+ollama pull llava-llama3
+```
+
+Once that works, obtain your Discord Bot token, put it in `.env`, then finally run Clyde:
+
+```
+cargo run --release
+```
