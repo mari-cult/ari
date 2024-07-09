@@ -1,0 +1,9 @@
+[package]
+name = "clyde-tools"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+indexmap = { version = "2.2.6", default-features = false, features = ["std"] }
+pyo3 = { version = "0.22.1", default-features = false }
+tokio = { version = "1.38.0", default-features = false, features = ["rt"] }
