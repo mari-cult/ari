@@ -5,10 +5,10 @@ A re-creation of Discord's discontinued [Clyde AI experiment](https://discord.fa
 
 # How use!?
 
-Install [Rust](https://rustup.rs), and [Ollama](https://github.com/ollama/ollama), download the LLaVA LLama 3 model:
+Install [Rust](https://rustup.rs), and [Ollama](https://github.com/ollama/ollama), download gemma2:
 
 ```
-ollama pull llava-llama3
+ollama pull gemma2
 ```
 
 Once that works, obtain your Discord Bot token, put it in `.env`, then finally run Clyde:
