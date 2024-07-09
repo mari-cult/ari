@@ -48,7 +48,7 @@ impl Core {
         Self {
             http: Http::new(),
             ollama: Ollama::default(),
-            model: String::from("llava-llama3"),
+            model: String::from("gemma2"),
             url_cache: DashMap::new(),
         }
     }

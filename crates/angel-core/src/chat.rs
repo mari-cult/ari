@@ -58,16 +58,8 @@ impl Chat {
             .join(", ");
 
         let users = format!("Users in this channel: {users}");
-        let rule0 = format!("You are named {name}");
-        let rules = [
-            &rule0,
-            "Communicate responses in lowercase, without punctuation",
-            &users,
-        ];
-
-        let mut system = rules.join(". ");
-
-        system.push('.');
+        let rules = ["You are a Discord user named Clyde"];
+        let system = rules.join(". ") + ".";
 
         let mut messages = messages
             .iter()
@@ -79,6 +71,6 @@ impl Chat {
 
         messages.insert(0, ChatMessage::system(system));
 
-        ChatMessageRequest::new("llava-llama3".into(), messages)
+        ChatMessageRequest::new("gemma2".into(), messages)
     }
 }

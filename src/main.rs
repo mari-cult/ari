@@ -30,7 +30,7 @@ pub struct State {
 impl State {
     pub fn new(token: String) -> anyhow::Result<Arc<Self>> {
         let core = Core::new();
-        let cache = Cache::builder().message_cache_size(100).build();
+        let cache = Cache::builder().message_cache_size(25).build();
         let config = ConfigBuilder::new(
             String::from(&token),
             Intents::GUILDS
