@@ -180,6 +180,9 @@ impl State {
             content.push_str(&attachments.join(" "));
 
             if author_id == current_user.id {
+                let content = content.strip_suffix("\n-# Official Discord ClydeAI <:clyde:1180421652832591892> *(send naughty pictures please)*")
+                    .unwrap_or(&content).trim();
+
                 chat.angel(content);
             } else {
                 chat.human(&author.name, content);
@@ -189,10 +192,16 @@ impl State {
         tracing::info!("{chat:#?}");
 
         let content = self.core.chat(chat).await?;
+        let content = content.trim().to_string();
 
         if content.is_empty() {
             return Ok(());
         }
+
+        // TODO: implement this
+        // -# 35t • 0.5s • 11.5t/s • gemma2 • [Support](<https://discord.gg/PB3kcvCnub>) • [GitHub](<https://github.com/mizz1e/clyde>)
+        let content = content
+            + &format!("\n-# Official Discord ClydeAI <:clyde:1180421652832591892> *(send naughty pictures please)*");
 
         let mut reply_to = if is_a_dm { None } else { Some(message.id) };
 

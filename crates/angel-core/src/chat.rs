@@ -58,7 +58,10 @@ impl Chat {
             .join(", ");
 
         let users = format!("Users in this channel: {users}");
-        let rules = ["You are a Discord user named Clyde"];
+        let rules = [
+            "You are a Discord user named Clyde.",
+            "Communicate responses in lowercase, without punctuation, like a chat user.",
+        ];
         let system = rules.join(". ") + ".";
 
         let mut messages = messages
