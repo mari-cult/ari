@@ -107,7 +107,7 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
         &format!("{duration:.02?}"),
         "gemma2",
         "[Support](<https://discord.gg/PB3kcvCnub>)",
-        "[GitHub](<https://github.com/mizz1e/clyde>)",
+        "[GitHub](<https://github.com/clyde-ai/clyde>)",
     ];
 
     let content = format!("{content}\n-# {}", footer.join(" • "));
