@@ -1,283 +1,181 @@
 use {
-    angel_core::{Chat, Core},
-    discord_content::MessageSplitter,
-    std::{env, sync::Arc},
-    tokio::sync::Mutex,
-    twilight_cache_inmemory::DefaultInMemoryCache as Cache,
-    twilight_gateway::{
-        ConfigBuilder, Event, EventTypeFlags, Intents, Shard as Gateway, ShardId, StreamExt as _,
-    },
-    twilight_http::Client as Rest,
-    twilight_model::{
-        channel::Message,
-        gateway::{
-            payload::outgoing::update_presence::UpdatePresencePayload,
-            presence::{Activity, ActivityType, MinimalActivity, Status},
+    pyo3::{conversion, prelude::*, types::PyDict, PyTypeCheck},
+    python::langchain::LangGraph,
+    serenity::{
+        all::{
+            ActivityData, Channel, Client, Context, CreateMessage, GatewayIntents, GetMessages,
+            Message, OnlineStatus, Settings,
         },
-        guild::Permissions,
-        id::{marker::UserMarker, Id},
+        prelude::*,
     },
+    std::{env, process, sync::Arc, time::Instant},
+    time::Duration,
+    tokio::{signal, task},
 };
 
-pub struct State {
-    core: Core,
-    cache: Cache,
-    gateway: Mutex<Gateway>,
-    rest: Rest,
-    message_splitter: MessageSplitter,
+pub mod python;
+pub mod util;
+
+struct Handler;
+
+#[serenity::async_trait]
+impl EventHandler for Handler {
+    async fn message(&self, context: Context, message: Message) {
+        handle_message(context, message).await.ok();
+    }
 }
 
-impl State {
-    pub fn new(token: String) -> anyhow::Result<Arc<Self>> {
-        let core = Core::new();
-        let cache = Cache::builder().message_cache_size(25).build();
-        let config = ConfigBuilder::new(
-            String::from(&token),
-            Intents::GUILDS
-                | Intents::GUILD_MEMBERS
-                | Intents::GUILD_MESSAGES
-                | Intents::DIRECT_MESSAGES
-                | Intents::MESSAGE_CONTENT,
-        )
-        .presence(dnd(String::from("im clyde")))
-        .build();
-        let gateway = Mutex::new(Gateway::with_config(ShardId::ONE, config));
-        let rest = Rest::new(token);
-
-        Ok(Arc::new(Self {
-            core,
-            cache,
-            gateway,
-            rest,
-            message_splitter: MessageSplitter::new(),
-        }))
+async fn handle_message(context: Context, message: Message) -> anyhow::Result<()> {
+    // Ignore messages from yourself.
+    if message.author.id == context.cache.current_user().id {
+        return Ok(());
     }
 
-    pub async fn process(self: &Arc<Self>) -> anyhow::Result<()> {
-        let Self { cache, gateway, .. } = &**self;
-        let mut gateway = gateway.lock().await;
-
-        while let Some(event) = gateway.next_event(EventTypeFlags::all()).await {
-            let event = event?;
-
-            cache.update(&event);
-
-            let Event::MessageCreate(message) = event else {
-                continue;
-            };
-
-            let this = Arc::clone(self);
-
-            tokio::spawn(async move {
-                this.process_message(message.0).await?;
-
-                Ok::<_, anyhow::Error>(())
-            });
-        }
-
-        Ok(())
+    if message.channel_id != 1261932165453582348 {
+        return Ok(());
     }
 
-    async fn process_message(self: &Arc<Self>, message: Message) -> anyhow::Result<()> {
-        let Self {
-            cache,
-            rest,
-            message_splitter,
-            ..
-        } = &**self;
+    let channel = message.channel(&context).await?;
+    let get_messages = GetMessages::new().before(message.id).limit(25);
+    let messages = match channel {
+        Channel::Guild(channel) => channel.messages(&context, get_messages).await?,
+        Channel::Private(channel) => channel.messages(&context, get_messages).await?,
+        _ => return Ok(()),
+    };
 
-        let Some(current_user) = cache.current_user() else {
-            return Ok(());
-        };
+    let name = "Clyde";
+    let location = "Server";
+    let users = "mari (kalmari246):";
 
-        // Don't reply to yourself.
-        if message.author.id == current_user.id {
-            return Ok(());
-        }
+    // rustfmt wants the string on its own lines, and that looks horrid.
+    #[rustfmt::skip]
+    let system_prompt = indoc::formatdoc!(r#"
+        You are named {name} - and are currently chatting in a Discord {location}.
+        Do not include name: or message: in your response.
+        If insulted, reply with a similar insult.
+        Communicate responses in lowercase, without punctuation, like a chat user.
+        Information about your environment:
+        You can use this information about the chat participants in the conversation in your replies. Use this information to answer questions.
+        {users}
+    "#);
 
-        // The channel needs to be cached...
-        /*let Some(channel) = cache.channel(message.channel_id) else {
-            return Ok(());
-        };*/
+    let system_prompt = python::langchain::Message::system(&system_prompt);
+    let mut conversation = vec![system_prompt];
 
-        // ...with message history to iterate.
-        let Some(channel_messages) = cache.channel_messages(message.channel_id) else {
-            return Ok(());
-        };
+    for message in messages.iter().take(15).rev() {
+        let name = message.author_nick(&context).await;
+        let name = name.as_deref().unwrap_or_else(|| {
+            message
+                .author
+                .global_name
+                .as_deref()
+                .unwrap_or(&message.author.name)
+        });
 
-        //println!("{channel:#?}");
-        println!("{channel_messages:#?}");
+        let content = message.content_safe(&context);
 
-        let is_a_dm = message.guild_id.is_none();
+        let message = if message.author.id == context.cache.current_user().id {
+            let content = content
+                .rsplit_once("\n-# ")
+                .map(|(content, _footer)| content)
+                .unwrap_or(&content);
 
-        let can_reply = cache
-            .permissions()
-            .in_channel(current_user.id, message.channel_id)
-            .ok()
-            .is_some_and(|permissions| permissions.contains(Permissions::SEND_MESSAGES))
-            || is_a_dm;
+            let content = format!("{name}: {content}");
 
-        // Don't even bother if you can't reply.
-        if !can_reply {
-            return Ok(());
-        }
-
-        let is_reply_to_you = message.is_reply_to(current_user.id);
-        let mentions_you = message.mentions(current_user.id);
-
-        // Reply if the message..
-        // ..is a reply to you.
-        // ..mentions you.
-        // ..is in a dm channel.
-        if !(is_reply_to_you || mentions_you || is_a_dm) {
-            return Ok(());
-        }
-
-        let channel_id = message.channel_id;
-        let channel = "cunt";
-        let user_id = message.author.id;
-        let user = &message.author.name;
-        let content = &message.content;
-        let guild = message.guild_id.and_then(|guild_id| cache.guild(guild_id));
-
-        if let Some(guild) = guild {
-            let guild_id = guild.id();
-            let guild = guild.name();
-
-            tracing::info!(
-                "@{user} ({user_id}) #{channel} ({channel_id}) {guild} ({guild_id}): {content}"
-            );
+            python::langchain::Message::assistant(&content)
         } else {
-            tracing::info!("@{user} ({user_id}) #{channel} ({channel_id}): {content}");
-        }
+            let content = format!("{name}: {content}");
+            python::langchain::Message::user(&content)
+        };
 
-        rest.create_typing_trigger(message.channel_id).await?;
-
-        let mut chat = Chat::with_name("Clyde");
-
-        for message_id in channel_messages.iter().copied().rev() {
-            let Some(message) = cache.message(message_id) else {
-                continue;
-            };
-
-            let author_id = message.author();
-            let Some(author) = cache.user(author_id) else {
-                continue;
-            };
-
-            let mut attachments = Vec::new();
-
-            for attachment in message.attachments() {
-                let name = &attachment.filename;
-                let url = &attachment.url;
-                let description = self.core.describe_media(url).await?;
-
-                attachments.push(format!("{name}: {description}"));
-            }
-
-            let mut content = message.content().to_string();
-
-            content.push_str(&attachments.join(" "));
-
-            if author_id == current_user.id {
-                let content = content.strip_suffix("\n-# Official Discord ClydeAI <:clyde:1180421652832591892> *(send naughty pictures please)*")
-                    .unwrap_or(&content).trim();
-
-                chat.angel(content);
-            } else {
-                chat.human(&author.name, content);
-            }
-        }
-
-        tracing::info!("{chat:#?}");
-
-        let content = self.core.chat(chat).await?;
-        let content = content.trim().to_string();
-
-        if content.is_empty() {
-            return Ok(());
-        }
-
-        // TODO: implement this
-        // -# 35t • 0.5s • 11.5t/s • gemma2 • [Support](<https://discord.gg/PB3kcvCnub>) • [GitHub](<https://github.com/mizz1e/clyde>)
-        let content = content
-            + &format!("\n-# Official Discord ClydeAI <:clyde:1180421652832591892> *(send naughty pictures please)*");
-
-        let mut reply_to = if is_a_dm { None } else { Some(message.id) };
-
-        for content in message_splitter.split(&content) {
-            let mut create_message = rest.create_message(message.channel_id).content(&content);
-
-            if let Some(reply) = reply_to.take() {
-                create_message = create_message.reply(reply);
-            }
-
-            create_message.await?;
-        }
-
-        Ok(())
+        conversation.push(message);
     }
+
+    println!("{conversation:#?}");
+
+    let start = Instant::now();
+    let content = {
+        let data = context.data.read().await;
+        let lang_graph = data.get::<LangGraphKey>().unwrap();
+
+        lang_graph.invoke_async(conversation).await?
+    };
+
+    let duration = start.elapsed();
+
+    let footer = [
+        &format!("{duration:.02?}"),
+        "gemma2",
+        "[Support](<https://discord.gg/PB3kcvCnub>)",
+        "[GitHub](<https://github.com/mizz1e/clyde>)",
+    ];
+
+    let content = format!("{content}\n-# {}", footer.join(" • "));
+    let nonce = util::nonce_of(&content);
+
+    let new_message = CreateMessage::new()
+        .content(content)
+        .enforce_nonce(true)
+        .nonce(nonce);
+
+    message
+        .channel_id
+        .send_message(&context.http, new_message)
+        .await?;
+
+    Ok(())
 }
 
-/// Returns a do not disturn presence payload.
-fn dnd(status: String) -> UpdatePresencePayload {
-    let activity = Activity::from(MinimalActivity {
-        kind: ActivityType::Custom,
-        name: status,
-        url: None,
-    });
+pub struct LangGraphKey;
 
-    UpdatePresencePayload {
-        activities: vec![activity],
-        afk: false,
-        since: None,
-        status: Status::DoNotDisturb,
-    }
-}
-
-pub trait MessageExt {
-    fn mentions(&self, id: Id<UserMarker>) -> bool;
-    fn mentions_any(&self, ids: &[Id<UserMarker>]) -> bool;
-
-    fn is_reply_to(&self, id: Id<UserMarker>) -> bool;
-    fn is_reply_to_any(&self, id: &[Id<UserMarker>]) -> bool;
-}
-
-impl MessageExt for Message {
-    fn mentions(&self, id: Id<UserMarker>) -> bool {
-        self.mentions.iter().any(|mention| mention.id == id)
-    }
-
-    fn mentions_any(&self, ids: &[Id<UserMarker>]) -> bool {
-        self.mentions
-            .iter()
-            .any(|mention| ids.contains(&mention.id))
-    }
-
-    fn is_reply_to(&self, id: Id<UserMarker>) -> bool {
-        self.referenced_message
-            .as_ref()
-            .is_some_and(|referenced_message| referenced_message.author.id == id)
-    }
-
-    fn is_reply_to_any(&self, ids: &[Id<UserMarker>]) -> bool {
-        self.referenced_message
-            .as_ref()
-            .is_some_and(|referenced_message| ids.contains(&referenced_message.author.id))
-    }
+impl TypeMapKey for LangGraphKey {
+    type Value = LangGraph;
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    dotenvy::dotenv()?;
-
+    dotenvy::dotenv().ok();
     tracing_subscriber::fmt::init();
-    angel_core::media::ffmpeg::init()?;
+    pyo3::prepare_freethreaded_python();
+
+    task::spawn(async move {
+        signal::ctrl_c().await.ok();
+        process::exit(1);
+    });
+
+    let lang_graph = LangGraph::new();
 
     let token = env::var("DISCORD_TOKEN")?;
-    let state = State::new(token)?;
+    let intents = GatewayIntents::DIRECT_MESSAGE_POLLS
+        | GatewayIntents::GUILDS
+        | GatewayIntents::GUILD_EMOJIS_AND_STICKERS
+        | GatewayIntents::GUILD_INVITES
+        | GatewayIntents::GUILD_MEMBERS
+        | GatewayIntents::GUILD_MESSAGES
+        | GatewayIntents::GUILD_MESSAGE_POLLS
+        | GatewayIntents::GUILD_MODERATION
+        | GatewayIntents::GUILD_PRESENCES
+        | GatewayIntents::MESSAGE_CONTENT;
 
-    state.process().await?;
+    let mut cache_settings = Settings::default();
+
+    cache_settings.max_messages = 1000;
+    cache_settings.time_to_live = Duration::hours(24).try_into().unwrap();
+
+    let mut client = Client::builder(token, intents)
+        .activity(ActivityData::custom("hi im clyde"))
+        .cache_settings(cache_settings)
+        .event_handler(Handler)
+        .status(OnlineStatus::Invisible)
+        .await?;
+
+    {
+        let mut data = client.data.write().await;
+
+        data.insert::<LangGraphKey>(lang_graph);
+    }
+
+    client.start().await?;
 
     Ok(())
 }
