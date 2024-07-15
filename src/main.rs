@@ -5,7 +5,8 @@ use {
     tokio::sync::Mutex,
     twilight_cache_inmemory::DefaultInMemoryCache as Cache,
     twilight_gateway::{
-        ConfigBuilder, Event, EventTypeFlags, Intents, Shard as Gateway, ShardId, StreamExt as _,
+        error::ReceiveMessageErrorType, ConfigBuilder, Event, EventTypeFlags, Intents,
+        Shard as Gateway, ShardId, StreamExt as _,
     },
     twilight_http::Client as Rest,
     twilight_model::{
@@ -58,7 +59,22 @@ impl State {
         let mut gateway = gateway.lock().await;
 
         while let Some(event) = gateway.next_event(EventTypeFlags::all()).await {
-            let event = event?;
+            let event = match event {
+                Ok(event) => event,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        ReceiveMessageErrorType::Reconnect | ReceiveMessageErrorType::WebSocket
+                    ) =>
+                {
+                    return Err(error.into())
+                }
+                Err(error) => {
+                    tracing::error!("{error}");
+
+                    continue;
+                }
+            };
 
             cache.update(&event);
 
@@ -201,7 +217,7 @@ impl State {
         // TODO: implement this
         // -# 35t • 0.5s • 11.5t/s • gemma2 • [Support](<https://discord.gg/PB3kcvCnub>) • [GitHub](<https://github.com/mizz1e/clyde>)
         let content = content
-            + &format!("\n-# Official Discord ClydeAI <:clyde:1180421652832591892> *(send naughty pictures please)*");
+            + "\n-# Official Discord ClydeAI <:clyde:1180421652832591892> *(send naughty pictures please)*";
 
         let mut reply_to = if is_a_dm { None } else { Some(message.id) };
 

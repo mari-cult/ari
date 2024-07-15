@@ -43,6 +43,12 @@ pub struct Core {
     url_cache: DashMap<String, String>,
 }
 
+impl Default for Core {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Core {
     pub fn new() -> Self {
         Self {
