@@ -115,7 +115,8 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
                 .collect::<Vec<_>>()
                 .into_iter()
                 .rev()
-                .take(15).cloned()
+                .take(15)
+                .cloned()
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -234,7 +235,7 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
             &format!("{tokens}t"),
             &format!("{:0.2?}s", elapsed.as_secs_f64()),
             "[Support](<https://discord.gg/PB3kcvCnub>)",
-            "[GitHub](<https://github.com/mizz1e/clyde>)",
+            "[GitHub](<https://github.com/clyde-ai/clyde>)",
         ]);
 
         content += &footer
