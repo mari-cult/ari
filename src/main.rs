@@ -126,13 +126,26 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
         return Ok(());
     }
 
+    let account = context
+        .data
+        .read()
+        .await
+        .get::<AccountKey>()
+        .unwrap()
+        .clone();
+
     let mut conversation = Vec::new();
 
     messages.sort_by_key(|message| message.id);
 
     for mut message in messages {
         if let Some(referenced_message) = message.referenced_message {
-            let name = referenced_message.author.display_name();
+            let name = if referenced_message.author.id == current_user_id {
+                &account.name
+            } else {
+                referenced_message.author.display_name()
+            };
+
             let content = referenced_message.content.trim_footer();
             let quoted = format!("Replying to {name}: {content}").to_quoted();
             let prepend = format!("{quoted}\n");
@@ -140,13 +153,24 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
             message.content.insert_str(0, &prepend);
         }
 
-        let name = message.author.display_name();
+        let name = if message.author.id == current_user_id {
+            &account.name
+        } else {
+            message.author.display_name()
+        };
 
         message.mentions.sort_unstable_by_key(|user| user.id);
         message.mentions.dedup_by_key(|user| user.id);
 
         for user in message.mentions {
-            let mention = format!("@{}", user.display_name());
+            let mention = format!(
+                "@{}",
+                if user.id == current_user_id {
+                    &account.name
+                } else {
+                    user.display_name()
+                }
+            );
 
             message.content = message
                 .content
@@ -165,14 +189,6 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
 
         conversation.push((role, message));
     }
-
-    let account = context
-        .data
-        .read()
-        .await
-        .get::<AccountKey>()
-        .unwrap()
-        .clone();
 
     let name = &account.name;
     let personality = &account.personality;
