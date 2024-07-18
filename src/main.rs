@@ -135,22 +135,27 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
         .clone();
 
     let mut conversation = Vec::new();
+    let mut last_id = None;
 
     messages.sort_by_key(|message| message.id);
 
     for mut message in messages {
+        let last_id = last_id.replace(message.id);
+
         if let Some(referenced_message) = message.referenced_message {
-            let name = if referenced_message.author.id == current_user_id {
-                &account.name
-            } else {
-                referenced_message.author.display_name()
-            };
+            if !last_id.is_some_and(|id| id == referenced_message.id) {
+                let name = if referenced_message.author.id == current_user_id {
+                    &account.name
+                } else {
+                    referenced_message.author.display_name()
+                };
 
-            let content = referenced_message.content.trim_footer();
-            let quoted = format!("Replying to {name}: {content}").to_quoted();
-            let prepend = format!("{quoted}\n");
+                let content = referenced_message.content.trim_footer();
+                let quoted = format!("Replying to {name}: {content}").to_quoted();
+                let prepend = format!("{quoted}\n");
 
-            message.content.insert_str(0, &prepend);
+                message.content.insert_str(0, &prepend);
+            }
         }
 
         let name = if message.author.id == current_user_id {
@@ -221,6 +226,10 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
         .await?;
 
     let content = result.message.content.trim();
+    let content = match content.split_once(':') {
+        Some((name, content)) if name.eq_ignore_ascii_case(&account.name) => content.trim(),
+        _ => content,
+    };
 
     if content.is_empty() {
         tracing::error!("{name} responded with whitespace or an empty message.");
