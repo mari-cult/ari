@@ -162,21 +162,16 @@ async fn generate_response(
 
     let mut conversation = Vec::new();
     let mut last_id = None;
-
-    let mut messages = context
+    let mut messages: Vec<_> = context
         .cache
         .channel_messages(channel_id)
         .as_ref()
-        .map(|message| message.values().cloned().collect::<Vec<_>>())
-        .unwrap_or_default()
-        .into_iter()
-        .rev()
-        .take(15)
-        .collect::<Vec<_>>();
+        .map(|message| message.values().cloned().collect())
+        .unwrap_or_default();
 
     messages.sort_by_key(|message| message.id);
 
-    for mut message in messages {
+    for mut message in messages.split_off(messages.len().saturating_sub(15)) {
         let last_id = last_id.replace(message.id);
 
         if let Some(referenced_message) = message.referenced_message {
