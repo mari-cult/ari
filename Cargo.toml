@@ -13,6 +13,7 @@ reqwest = { version = "0.11", default-features = false, features = ["brotli", "c
 serde = { version = "1.0.204", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0.120", default-features = false, features = ["std"] }
 textwrap = { version = "0.16.1", default-features = false, features = ["hyphenation", "smawk", "unicode-linebreak", "unicode-width"] }
+time = { version = "0.3.36", default-features = false, features = ["formatting", "macros"] }
 tokio = { version = "1.38.0", default-features = false, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { version = "0.1.40", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["ansi", "env-filter"] }

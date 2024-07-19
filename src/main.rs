@@ -24,11 +24,15 @@ use {
         ops::Range,
         time::{Duration, Instant},
     },
+    time::{macros::format_description, OffsetDateTime},
 };
 
 pub mod util;
 
 struct Handler;
+
+/// Clyde account ID.
+const CLYDE_ID: UserId = UserId::new(1227287331824861395);
 
 /// Selezen account ID.
 const SELEZEN_ID: UserId = UserId::new(1262577744785571861);
@@ -45,7 +49,6 @@ impl EventHandler for Handler {
         if ready.user.id == SELEZEN_ID {
             tokio::spawn(async move {
                 let start = Instant::now();
-                let current_user_id = context.cache.current_user().id;
 
                 loop {
                     let context = context.clone();
@@ -59,7 +62,7 @@ impl EventHandler for Handler {
 
                     tracing::info!("Running selezen inference");
 
-                    let _result = generate_response(context, current_user_id, GENERAL_ID).await;
+                    let _result = generate_response(context, SELEZEN_ID, GENERAL_ID).await;
                 }
             });
         }
@@ -171,7 +174,7 @@ async fn generate_response(
 
     messages.sort_by_key(|message| message.id);
 
-    for mut message in messages.split_off(messages.len().saturating_sub(15)) {
+    for mut message in messages.split_off(messages.len().saturating_sub(10)) {
         let last_id = last_id.replace(message.id);
 
         if let Some(referenced_message) = message.referenced_message {
@@ -230,9 +233,11 @@ async fn generate_response(
     let name = &account.name;
     let personality = &account.personality;
     let location = "server";
-
+    let time = OffsetDateTime::now_utc().format(format_description!(
+        "[year]-[month]-[day] [hour]:[minute]:[second]"
+    ))?;
     let instructions = indoc::formatdoc!(
-        "You are named {name} and are currently chatting in a Discord {location}. {personality}"
+        "You are named {name} and are currently chatting in a Discord {location}. {personality}. The time is currently: {time}",
     );
 
     let messages = iter::once((Role::System, instructions))
@@ -273,7 +278,6 @@ async fn generate_response(
     let elapsed = Duration::from_nanos(result.eval_duration).as_secs_f64();
     let elapsed = format!("{elapsed:0.2?}s");
 
-    tracing::info!("{name}'s response: {content}");
     tracing::info!("{name} took {elapsed} to generate {tokens}: {content}");
 
     let (mut content, _empty_count) = content.split_inclusive('\n').fold(
@@ -297,7 +301,7 @@ async fn generate_response(
             "[GitHub](<https://github.com/clyde-ai/clyde>)",
         ]);
 
-        content += &footer
+        content += &footer;
     }
 
     let create_message = CreateMessage::new().content(content);

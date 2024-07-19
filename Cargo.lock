@@ -209,6 +209,7 @@ dependencies = [
  "serde_json",
  "serenity",
  "textwrap",
+ "time",
  "tokio",
  "tracing",
  "tracing-subscriber",
