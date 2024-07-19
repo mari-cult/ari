@@ -27,6 +27,7 @@ impl StrExt for str {
         self.rsplit_once("-# ")
             .map(|(content, _footer)| content)
             .unwrap_or(self)
+            .trim_end()
     }
 }
 

@@ -1,6 +1,7 @@
 use {
     self::util::{StrExt, UserExt},
     futures::future,
+    rand::Rng,
     reqwest::Client,
     serde::{Deserialize, Serialize},
     serenity::{
@@ -12,20 +13,58 @@ use {
         http::HttpBuilder,
         model::{
             channel::{Message, MessageType},
-            gateway::GatewayIntents,
+            gateway::{GatewayIntents, Ready},
+            id::{ChannelId, UserId},
             user::OnlineStatus,
         },
         prelude::TypeMapKey,
     },
-    std::{env, iter, time::Duration},
+    std::{
+        env, iter,
+        ops::Range,
+        time::{Duration, Instant},
+    },
 };
 
 pub mod util;
 
 struct Handler;
 
+/// Selezen account ID.
+const SELEZEN_ID: UserId = UserId::new(1262577744785571861);
+
+/// Ten to fifteen minutes.
+const SELEZEN_RANGE: Range<f64> = 10.0..(15.0 * 60.0);
+
+/// #general in Cool Clyde Club
+const GENERAL_ID: ChannelId = ChannelId::new(1244284242079514785);
+
 #[serenity::async_trait]
 impl EventHandler for Handler {
+    async fn ready(&self, context: Context, ready: Ready) {
+        if ready.user.id == SELEZEN_ID {
+            tokio::spawn(async move {
+                let start = Instant::now();
+                let current_user_id = context.cache.current_user().id;
+
+                loop {
+                    let context = context.clone();
+
+                    let bias = start.elapsed().as_secs_f64().sin().abs();
+                    let secs = rand::thread_rng().gen_range(SELEZEN_RANGE) * bias;
+
+                    tracing::info!("Selezen is waiting {secs:0.2?}s until running inference");
+
+                    tokio::time::sleep(Duration::from_secs_f64(secs)).await;
+
+                    tracing::info!("Running selezen inference");
+
+                    let _result = generate_response(context, current_user_id, GENERAL_ID).await;
+                }
+            });
+        }
+    }
+
     async fn message(&self, context: Context, message: Message) {
         let _result = tokio::spawn(handle_message(context, message)).await;
     }
@@ -105,27 +144,14 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
         return Ok(());
     }
 
-    let mut messages = context
-        .cache
-        .channel_messages(message.channel_id)
-        .as_ref()
-        .map(|message| {
-            message
-                .values()
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .take(15)
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    generate_response(context, current_user_id, message.channel_id).await
+}
 
-    // Don't do a thing with no messages.
-    if messages.is_empty() {
-        return Ok(());
-    }
-
+async fn generate_response(
+    context: Context,
+    current_user_id: UserId,
+    channel_id: ChannelId,
+) -> anyhow::Result<()> {
     let account = context
         .data
         .read()
@@ -136,6 +162,17 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
 
     let mut conversation = Vec::new();
     let mut last_id = None;
+
+    let mut messages = context
+        .cache
+        .channel_messages(channel_id)
+        .as_ref()
+        .map(|message| message.values().cloned().collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .rev()
+        .take(15)
+        .collect::<Vec<_>>();
 
     messages.sort_by_key(|message| message.id);
 
@@ -237,10 +274,12 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
         return Ok(());
     }
 
-    tracing::info!("{name}'s response: {content}");
+    let tokens = format!("{}t", result.eval_count);
+    let elapsed = Duration::from_nanos(result.eval_duration).as_secs_f64();
+    let elapsed = format!("{elapsed:0.2?}s");
 
-    let tokens = result.eval_count;
-    let elapsed = Duration::from_nanos(result.eval_duration);
+    tracing::info!("{name}'s response: {content}");
+    tracing::info!("{name} took {elapsed} to generate {tokens}: {content}");
 
     let (mut content, _empty_count) = content.split_inclusive('\n').fold(
         (String::with_capacity(content.len()), 0_usize),
@@ -257,8 +296,8 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
 
     if account.footer {
         let footer = util::footer([
-            &format!("{tokens}t"),
-            &format!("{:0.2?}s", elapsed.as_secs_f64()),
+            &tokens,
+            &elapsed,
             "[Support](<https://discord.gg/PB3kcvCnub>)",
             "[GitHub](<https://github.com/clyde-ai/clyde>)",
         ]);
@@ -268,10 +307,7 @@ async fn handle_message(context: Context, message: Message) -> anyhow::Result<()
 
     let create_message = CreateMessage::new().content(content);
 
-    message
-        .channel_id
-        .send_message(&context, create_message)
-        .await?;
+    channel_id.send_message(&context, create_message).await?;
 
     Ok(())
 }
