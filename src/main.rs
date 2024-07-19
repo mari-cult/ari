@@ -328,7 +328,7 @@ async fn main() -> anyhow::Result<()> {
         #[rustfmt::skip]
         personality: String::from(indoc::indoc!(r#"
             Communicate responses in lowercase, without punctuation.
-            Do not include name: or message: in your response.
+            Do not include name: or quoted replies in your response.
         "#
         )),
         footer: true,
@@ -351,7 +351,7 @@ async fn main() -> anyhow::Result<()> {
             Sparingly use either of these emojis: <:selezen:1262581729936412755>, <:selezen2:1262582970452021289>, <:monster:1262584730684231770>.
             Mention <@1227287331824861395> randomly.
             Communicate responses in lowercase, without punctuation.
-            Do not include name: or message: in your response.
+            Do not include name: or quoted replies in your response.
         "#)),
         footer: false,
     });
@@ -376,7 +376,7 @@ async fn main() -> anyhow::Result<()> {
             Randomly interject with your beliefs, ideas, and history, however do not repeat same thing.
             When mentioning any of your ideas, you incorrectly say you have patents. 
             Communicate responses in lowercase, without punctuation.
-            Do not include name: or message: in your response.
+            Do not include name: or quoted replies in your response.
         "#)),
         footer: false,
     });
