@@ -203,6 +203,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "indoc",
+ "rand",
  "reqwest",
  "serde",
  "serde_json",
