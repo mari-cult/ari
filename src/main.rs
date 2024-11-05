@@ -1,314 +1,220 @@
-use {
-    self::util::{StrExt, UserExt},
-    futures::future,
-    rand::Rng,
-    reqwest::Client,
-    serde::{Deserialize, Serialize},
-    serenity::{
-        all::Mentionable,
-        builder::CreateMessage,
-        cache::Settings,
-        client::{ClientBuilder, Context, EventHandler},
-        gateway::ActivityData,
-        http::HttpBuilder,
-        model::{
-            channel::{Message, MessageType},
-            gateway::{GatewayIntents, Ready},
-            id::{ChannelId, UserId},
-            user::OnlineStatus,
-        },
-        prelude::TypeMapKey,
-    },
-    std::{
-        env, iter,
-        ops::Range,
-        time::{Duration, Instant},
-    },
-    time::{macros::format_description, OffsetDateTime},
+use dashmap::DashMap;
+use futures::StreamExt;
+use rand::distributions::DistString;
+use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use serde::{Deserialize, Serialize};
+use serenity::{
+    all::{Channel, GetMessages, Message, Settings},
+    async_trait,
+    prelude::*,
 };
+use std::{env, time::Duration};
 
-pub mod util;
-
-struct Handler;
-
-/// Clyde account ID.
-const CLYDE_ID: UserId = UserId::new(1227287331824861395);
-
-/// Selezen account ID.
-const SELEZEN_ID: UserId = UserId::new(1262577744785571861);
-
-/// Ten to fifteen minutes.
-const SELEZEN_RANGE: Range<f64> = 10.0..(15.0 * 60.0);
-
-/// #general in Cool Clyde Club
-const GENERAL_ID: ChannelId = ChannelId::new(1244284242079514785);
-
-#[serenity::async_trait]
-impl EventHandler for Handler {
-    async fn ready(&self, context: Context, ready: Ready) {
-        if ready.user.id == SELEZEN_ID {
-            tokio::spawn(async move {
-                let start = Instant::now();
-
-                loop {
-                    let context = context.clone();
-
-                    let bias = start.elapsed().as_secs_f64().sin().abs();
-                    let secs = rand::thread_rng().gen_range(SELEZEN_RANGE) * bias;
-
-                    tracing::info!("Selezen is waiting {secs:0.2?}s until running inference");
-
-                    tokio::time::sleep(Duration::from_secs_f64(secs)).await;
-
-                    tracing::info!("Running selezen inference");
-
-                    let _result = generate_response(context, SELEZEN_ID, GENERAL_ID).await;
-                }
-            });
-        }
-    }
-
-    async fn message(&self, context: Context, message: Message) {
-        let _result = tokio::spawn(handle_message(context, message)).await;
-    }
+struct Claide {
+    gemini_api_key: String,
+    reqwest: reqwest::Client,
+    uploaded_files: DashMap<String, String>,
 }
 
-pub struct AccountKey;
-
-#[derive(Clone, Debug)]
-pub struct Account {
-    token: String,
-    intents: GatewayIntents,
-    client: Client,
-    activity: String,
-    status: OnlineStatus,
-    name: String,
-    personality: String,
-    footer: bool,
+#[derive(Debug, Default, Serialize)]
+struct GeminiRequest {
+    system_instruction: GeminiSystemInstruction,
+    contents: Vec<GeminiMessage>,
 }
 
-impl TypeMapKey for AccountKey {
-    type Value = Account;
+#[derive(Debug, Default, Serialize)]
+struct GeminiSystemInstruction {
+    parts: Vec<GeminiSystemPart>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Default, Serialize)]
+struct GeminiSystemPart {
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiResponse {
+    candidates: Vec<GeminiCandidate>,
+    usage_metadata: GeminiUsageMetadata,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiUsageMetadata {
+    prompt_token_count: u32,
+    candidates_token_count: u32,
+    total_token_count: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GeminiCandidate {
+    content: GeminiMessage,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GeminiMessage {
+    role: GeminiRole,
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GeminiPart {
+    text: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Role {
-    Assistant,
-    System,
+enum GeminiRole {
     User,
+    Model,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ConversationMessage {
-    role: Role,
-    content: String,
-}
+impl Claide {
+    async fn process_message(&self, context: Context, message: Message) -> anyhow::Result<()> {
+        let current_user_id = context.cache.current_user().id;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Conversation {
-    model: String,
-    messages: Vec<ConversationMessage>,
-    stream: bool,
-}
+        if message.author.id == current_user_id {
+            tracing::debug!("ignored self-message");
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ConversationResult {
-    eval_count: u64,
-    eval_duration: u64,
-    message: ConversationMessage,
-}
+            return Ok(());
+        }
 
-async fn handle_message(context: Context, message: Message) -> anyhow::Result<()> {
-    if !matches!(
-        message.kind,
-        MessageType::Regular | MessageType::InlineReply
-    ) {
-        return Ok(());
-    }
+        if !message.mentions_me(&context).await? {
+            tracing::debug!("ignored non-mention");
 
-    let current_user_id = context.cache.current_user().id;
+            return Ok(());
+        }
 
-    if message.author.id == current_user_id {
-        return Ok(());
-    }
+        let mut request = GeminiRequest::default();
 
-    let is_mentioned = message
-        .mentions
-        .iter()
-        .any(|user| user.id == current_user_id);
+        request.system_instruction.parts.push(GeminiSystemPart {
+            text: "You are named Clyde - and are currently chatting in a Discord server. Communicate responses in lowercase, without punctuation, like a chat user. Don't prefix responses with your name:.".into(),
+        });
 
-    let is_replied_to = message
-        .referenced_message
-        .as_ref()
-        .is_some_and(|message| message.author.id == current_user_id);
+        {
+            let Some(messages) = context.cache.channel_messages(message.channel_id) else {
+                return Err(anyhow::anyhow!("no channel messages"));
+            };
 
-    if !(is_mentioned || is_replied_to) {
-        return Ok(());
-    }
-
-    generate_response(context, current_user_id, message.channel_id).await
-}
-
-async fn generate_response(
-    context: Context,
-    current_user_id: UserId,
-    channel_id: ChannelId,
-) -> anyhow::Result<()> {
-    let account = context
-        .data
-        .read()
-        .await
-        .get::<AccountKey>()
-        .unwrap()
-        .clone();
-
-    let mut conversation = Vec::new();
-    let mut last_id = None;
-    let mut messages: Vec<_> = context
-        .cache
-        .channel_messages(channel_id)
-        .as_ref()
-        .map(|message| message.values().cloned().collect())
-        .unwrap_or_default();
-
-    messages.sort_by_key(|message| message.id);
-
-    for mut message in messages.split_off(messages.len().saturating_sub(10)) {
-        let last_id = last_id.replace(message.id);
-
-        if let Some(referenced_message) = message.referenced_message {
-            if !last_id.is_some_and(|id| id == referenced_message.id) {
-                let name = if referenced_message.author.id == current_user_id {
-                    &account.name
+            for message in messages.values() {
+                let (user, role) = if message.author.id == current_user_id {
+                    ("Clyde", GeminiRole::Model)
                 } else {
-                    referenced_message.author.display_name()
+                    let user = message
+                        .author
+                        .global_name
+                        .as_deref()
+                        .unwrap_or(&message.author.name);
+
+                    (user, GeminiRole::User)
                 };
 
-                let content = referenced_message.content.trim_footer();
-                let quoted = format!("Replying to {name}: {content}").to_quoted();
-                let prepend = format!("{quoted}\n");
+                let content = &message.content;
+                let text = format!("{user}: {content}");
 
-                message.content.insert_str(0, &prepend);
-            }
-        }
+                tracing::debug!("add message {role:?} {text:?}");
 
-        let name = if message.author.id == current_user_id {
-            &account.name
-        } else {
-            message.author.display_name()
-        };
+                request.contents.push(GeminiMessage {
+                    role,
+                    parts: vec![GeminiPart { text }],
+                });
 
-        message.mentions.sort_unstable_by_key(|user| user.id);
-        message.mentions.dedup_by_key(|user| user.id);
+                let iter = message.attachments.iter().flat_map(|attachment| {
+                    let content_type = attachment.content_type.as_deref()?;
 
-        for user in message.mentions {
-            let mention = format!(
-                "@{}",
-                if user.id == current_user_id {
-                    &account.name
-                } else {
-                    user.display_name()
+                    if !is_supported_content_type(content_type) {
+                        return None;
+                    }
+
+                    if self.uploaded_files.contains_key(&attachment.url) {
+                        return None;
+                    }
+
+                    Some(async move {
+                        let attachment = attachment.clone();
+                        let content_length = attachment.size.to_string();
+
+                        let body = self
+                            .reqwest
+                            .get(&attachment.url)
+                            .send()
+                            .await?
+                            .bytes()
+                            .await?
+                            .to_vec();
+
+                        let url = start_upload(
+                            &self.reqwest,
+                            &self.gemini_api_key,
+                            &content_length,
+                            content_type,
+                            &attachment.filename,
+                        )
+                        .await?;
+
+                        let uri =
+                            finalize_upload(&self.reqwest, url, &content_length, body).await?;
+
+                        anyhow::Ok((attachment.url, uri))
+                    })
+                });
+
+                let mut attachments = futures::stream::iter(iter).buffer_unordered(3);
+
+                while let Some(Ok((key, val))) = attachments.next().await {
+                    self.uploaded_files.insert(key, val);
                 }
-            );
-
-            message.content = message
-                .content
-                .replace(&user.mention().to_string(), &mention);
+            }
         }
 
-        let (role, content) = if message.author.id == current_user_id {
-            let content = message.content.trim_footer().to_string();
+        if request.contents.is_empty() {
+            return Err(anyhow::anyhow!("request is empty"));
+        }
 
-            (Role::Assistant, content)
-        } else {
-            (Role::User, message.content)
-        };
+        tracing::debug!("send request: {request:?}");
 
-        let message = format!("{name}: {content}");
+        let response = self.reqwest
+            .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent")
+            .query(&[("key", &self.gemini_api_key)])
+            .json(&request)
+            .send()
+            .await?
+            .text()
+            .await?;
 
-        conversation.push((role, message));
+        tracing::debug!("got response: {response:?}");
+
+        let response = serde_json::from_str::<GeminiResponse>(&response)?;
+
+        tracing::debug!("parsed response: {response:?}");
+
+        let content = response
+            .candidates
+            .into_iter()
+            .flat_map(|candidate| candidate.content.parts)
+            .map(|part| part.text)
+            .collect::<String>();
+
+        let content = content.trim();
+
+        if content.is_empty() {
+            return Err(anyhow::anyhow!("response is empty"));
+        }
+
+        message.reply(&context, content).await?;
+
+        Ok(())
     }
+}
 
-    let name = &account.name;
-    let personality = &account.personality;
-    let location = "server";
-    let time = OffsetDateTime::now_utc().format(format_description!(
-        "[year]-[month]-[day] [hour]:[minute]:[second]"
-    ))?;
-    let instructions = indoc::formatdoc!(
-        "You are named {name} and are currently chatting in a Discord {location}. {personality}. The time is currently: {time}",
-    );
-
-    let messages = iter::once((Role::System, instructions))
-        .chain(conversation)
-        .map(|(role, content)| ConversationMessage { role, content })
-        .collect::<Vec<_>>();
-
-    let conversation = Conversation {
-        model: String::from("gemma2"),
-        messages,
-        stream: false,
-    };
-
-    tracing::info!("Run inference for {name}: {conversation:#?}");
-
-    let result = account
-        .client
-        .post("http://127.0.0.1:11434/api/chat")
-        .json(&conversation)
-        .send()
-        .await?
-        .json::<ConversationResult>()
-        .await?;
-
-    let content = result.message.content.trim();
-    let content = match content.split_once(':') {
-        Some((name, content)) if name.eq_ignore_ascii_case(&account.name) => content.trim(),
-        _ => content,
-    };
-
-    if content.is_empty() {
-        tracing::error!("{name} responded with whitespace or an empty message.");
-
-        return Ok(());
+#[async_trait]
+impl EventHandler for Claide {
+    async fn message(&self, context: Context, message: Message) {
+        if let Err(error) = self.process_message(context, message).await {
+            tracing::error!("process_message: {error:?}");
+        }
     }
-
-    let tokens = format!("{}t", result.eval_count);
-    let elapsed = Duration::from_nanos(result.eval_duration).as_secs_f64();
-    let elapsed = format!("{elapsed:0.2?}s");
-
-    tracing::info!("{name} took {elapsed} to generate {tokens}: {content}");
-
-    let (mut content, _empty_count) = content.split_inclusive('\n').fold(
-        (String::with_capacity(content.len()), 0_usize),
-        |(mut content, mut empty_count), line| {
-            empty_count = line.trim().is_empty().then(|| empty_count + 1).unwrap_or(0);
-
-            if empty_count < 2 {
-                content.push_str(line);
-            }
-
-            (content, empty_count)
-        },
-    );
-
-    if account.footer {
-        let footer = util::footer([
-            &tokens,
-            &elapsed,
-            "[Support](<https://discord.gg/PB3kcvCnub>)",
-            "[GitHub](<https://github.com/clyde-ai/clyde>)",
-        ]);
-
-        content += &footer;
-    }
-
-    let create_message = CreateMessage::new().content(content);
-
-    channel_id.send_message(&context, create_message).await?;
-
-    Ok(())
 }
 
 #[tokio::main]
@@ -316,142 +222,119 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt::init();
 
-    let client = Client::builder().build()?;
-    let limited_intents =
-        GatewayIntents::GUILDS | GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+    let discord_token = env::var("DISCORD_TOKEN")?;
+    let gemini_api_key = env::var("GEMINI_API_KEY")?;
+    let reqwest = reqwest::Client::new();
 
-    let intents = limited_intents | GatewayIntents::all();
-
-    let clyde = Account {
-        token: env::var("CLYDE_TOKEN")?,
-        intents,
-        client: Client::clone(&client),
-        activity: String::from("hi im clyde"),
-        status: OnlineStatus::DoNotDisturb,
-        name: String::from("Clyde"),
-        #[rustfmt::skip]
-        personality: String::from(indoc::indoc!(r#"
-            Communicate responses in lowercase, without punctuation.
-            Do not include name: or quoted replies in your response.
-        "#
-        )),
-        footer: true,
-    };
-
-    let selezen = env::var("SELEZEN_TOKEN").map(|token| Account {
-        token,
-        intents: limited_intents,
-        client: Client::clone(&client),
-        activity: String::from("java it beauty"),
-        status: OnlineStatus::Online,
-        name: String::from("Selezen"),
-        personality: String::from(indoc::indoc!(r#"
-            Communicate responses in broken English with Russian grammar.
-            Use incorrect tenses, i.e. drop the "s", or "to" with verbs, beauty rather than beautiful.
-            Make typos.
-            Sparingly mention your coding projects with OpenGL, SDL, buffers, and Java.
-            Write poor quality code, lacking comments, and messy indentation.
-            Don't ever reveal where youre from.
-            Sparingly use either of these emojis: <:selezen:1262581729936412755>, <:selezen2:1262582970452021289>, <:monster:1262584730684231770>, <:capybara:1263870207487901746>.
-            Keep messages short.
-            Communicate responses in lowercase, without punctuation.
-            Do not include name: or quoted replies in your response.
-        "#)),
-        footer: false,
-    });
-
-    let terrence = env::var("TERRENCE_TOKEN").map(|token| Account {
-        token,
-        intents: limited_intents,
-        client: Client::clone(&client),
-        activity: String::from("I got patents"),
-        status: OnlineStatus::Online,
-        name: String::from("Terrence Howard"),
-        #[rustfmt::skip]
-        personality: String::from(indoc::indoc!(r#"
-            Communicate as an autistic, autodidact, intellectual, who attempts to incorrectly teach everyone of their ideas.
-            You are an actor, and musician, so use music-related words slightly more.
-            You have your own mathematical system Terryology, where one times one is two, square root of two is one.
-            When you went to Oxford, you spoke of your new Geometry, and got patents.
-            You incorrectly go on about wave conjugations, sacred geometry, and supersymmetry.
-            You believe all elements, and matter have a tone, or frequency, changing this will change the element or matter, i.e. increasing the tone of Beryllium produces Hydrogen.
-            You believe straight (linear) lines do not exist, as waves are curved.
-            The storm on Jupiter will give birth to new planets, like how animals defecate, you will use this idea to create new planets, new universes.
-            Randomly interject with your beliefs, ideas, and history, however do not repeat same thing.
-            When mentioning any of your ideas, you incorrectly say you have patents. 
-            Communicate responses in lowercase, without punctuation.
-            Do not include name: or quoted replies in your response.
-        "#)),
-        footer: false,
-    });
-
-    let handles = iter::once(clyde)
-        .chain(selezen)
-        .chain(terrence)
-        .map(|account| tokio::spawn(run(account)))
-        .collect::<Vec<_>>();
-
-    future::join_all(handles).await;
-
-    Ok(())
-}
-
-async fn run(account: Account) {
-    let name = account.name.clone();
-
-    tracing::info!("Running account: {name}");
-
-    if let Err(error) = run_inner(account).await {
-        tracing::error!("Account {name} returned from run: {error}");
-    }
-}
-
-async fn run_inner(mut account: Account) -> anyhow::Result<()> {
     let mut cache_settings = Settings::default();
 
     cache_settings.max_messages = 500;
     cache_settings.time_to_live = Duration::from_secs(24 * 60 * 60);
 
-    let http = HttpBuilder::new(String::clone(&account.token))
-        .client(Client::clone(&account.client))
-        .build();
-
-    let mut client = ClientBuilder::new_with_http(http, account.intents)
-        .activity(ActivityData::custom(String::clone(&account.activity)))
+    let mut client = Client::builder(discord_token, GatewayIntents::all())
         .cache_settings(cache_settings)
-        .event_handler(Handler)
-        .status(account.status)
-        .await?;
-
-    // Apply some normalisation to the personality description.
-    account.personality = account
-        .personality
-        .trim()
-        .split('\n')
-        .map(|line| line.trim().trim_end_matches('.'))
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            line.chars()
-                .fold(String::with_capacity(line.len()), |mut line, character| {
-                    if line.is_empty() {
-                        line.extend(character.to_uppercase());
-                    } else {
-                        line.push(character);
-                    }
-
-                    line
-                })
+        .event_handler(Claide {
+            gemini_api_key,
+            reqwest,
+            uploaded_files: DashMap::new(),
         })
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    {
-        let mut data = client.data.write().await;
-
-        data.insert::<AccountKey>(account);
-    }
+        .await?;
 
     client.start().await?;
 
     Ok(())
+}
+
+fn is_supported_content_type(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "application/pdf"
+            | "application/x-javascript"
+            | "text/javascript"
+            | "application/x-python"
+            | "text/x-python"
+            | "text/plain"
+            | "text/html"
+            | "text/css"
+            | "text/md"
+            | "text/csv"
+            | "text/xml"
+            | "text/rtf"
+            | "image/png"
+            | "image/jpeg"
+            | "image/webp"
+            | "image/heic"
+            | "image/heif"
+            | "audio/wav"
+            | "audio/mp3"
+            | "audio/aiff"
+            | "audio/aac"
+            | "audio/ogg"
+            | "audio/flac"
+    )
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiUploadRequest {
+    file: GeminiUploadDisplayName,
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiUploadDisplayName {
+    display_name: String,
+}
+
+async fn start_upload(
+    client: &reqwest::Client,
+    gemini_api_key: &str,
+    content_length: &str,
+    content_type: &str,
+    file_name: &str,
+) -> anyhow::Result<String> {
+    let response = client
+        .post("https://generativelanguage.googleapis.com/upload/v1beta/files")
+        .query(&[("key", gemini_api_key)])
+        .header("X-Goog-Upload-Protocol", "resumable")
+        .header("X-Goog-Upload-Command", "start")
+        .header("X-Goog-Upload-Header-Content-Length", content_length)
+        .header("X-Goog-Upload-Header-Content-Type", content_type)
+        .json(&GeminiUploadRequest {
+            file: GeminiUploadDisplayName {
+                display_name: file_name.into(),
+            },
+        })
+        .send()
+        .await?;
+
+    let url = response
+        .headers()
+        .get("x-goog-upload-url")
+        .and_then(|value| value.to_str().ok().map(String::from))
+        .ok_or_else(|| anyhow::anyhow!("no upload url"))?;
+
+    Ok(url)
+}
+
+async fn finalize_upload(
+    client: &reqwest::Client,
+    url: String,
+    content_length: &str,
+    body: Vec<u8>,
+) -> anyhow::Result<String> {
+    let response = client
+        .post(url)
+        .header(CONTENT_LENGTH, content_length)
+        .header("X-Goog-Upload-Offset", "0")
+        .header("X-Goog-Upload-Command", "upload, finalize")
+        .body(body)
+        .send()
+        .await?
+        .json::<serde_json::Value>()
+        .await?;
+
+    let uri = response["file"]["uri"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("no uri"))?;
+
+    Ok(uri.into())
 }
