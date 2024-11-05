@@ -10,7 +10,7 @@ use serenity::{
 };
 use std::{env, time::Duration};
 
-mod gemini;
+pub mod gemini;
 
 struct Claide {
     gemini_api_key: String,
@@ -121,52 +121,6 @@ impl Claide {
                     role,
                     parts: vec![GeminiPart { text }],
                 });
-
-                let iter = message.attachments.iter().flat_map(|attachment| {
-                    let content_type = attachment.content_type.as_deref()?;
-
-                    if !is_supported_content_type(content_type) {
-                        return None;
-                    }
-
-                    if self.uploaded_files.contains_key(&attachment.url) {
-                        return None;
-                    }
-
-                    Some(async move {
-                        let attachment = attachment.clone();
-                        let content_length = attachment.size.to_string();
-
-                        let body = self
-                            .reqwest
-                            .get(&attachment.url)
-                            .send()
-                            .await?
-                            .bytes()
-                            .await?
-                            .to_vec();
-
-                        let url = start_upload(
-                            &self.reqwest,
-                            &self.gemini_api_key,
-                            &content_length,
-                            content_type,
-                            &attachment.filename,
-                        )
-                        .await?;
-
-                        let uri =
-                            finalize_upload(&self.reqwest, url, &content_length, body).await?;
-
-                        anyhow::Ok((attachment.url, uri))
-                    })
-                });
-
-                let mut attachments = futures::stream::iter(iter).buffer_unordered(3);
-
-                while let Some(Ok((key, val))) = attachments.next().await {
-                    self.uploaded_files.insert(key, val);
-                }
             }
         }
 
@@ -245,98 +199,4 @@ async fn main() -> anyhow::Result<()> {
     client.start().await?;
 
     Ok(())
-}
-
-fn is_supported_content_type(content_type: &str) -> bool {
-    matches!(
-        content_type,
-        "application/pdf"
-            | "application/x-javascript"
-            | "text/javascript"
-            | "application/x-python"
-            | "text/x-python"
-            | "text/plain"
-            | "text/html"
-            | "text/css"
-            | "text/md"
-            | "text/csv"
-            | "text/xml"
-            | "text/rtf"
-            | "image/png"
-            | "image/jpeg"
-            | "image/webp"
-            | "image/heic"
-            | "image/heif"
-            | "audio/wav"
-            | "audio/mp3"
-            | "audio/aiff"
-            | "audio/aac"
-            | "audio/ogg"
-            | "audio/flac"
-    )
-}
-
-#[derive(Debug, Serialize)]
-struct GeminiUploadRequest {
-    file: GeminiUploadDisplayName,
-}
-
-#[derive(Debug, Serialize)]
-struct GeminiUploadDisplayName {
-    display_name: String,
-}
-
-async fn start_upload(
-    client: &reqwest::Client,
-    gemini_api_key: &str,
-    content_length: &str,
-    content_type: &str,
-    file_name: &str,
-) -> anyhow::Result<String> {
-    let response = client
-        .post("https://generativelanguage.googleapis.com/upload/v1beta/files")
-        .query(&[("key", gemini_api_key)])
-        .header("X-Goog-Upload-Protocol", "resumable")
-        .header("X-Goog-Upload-Command", "start")
-        .header("X-Goog-Upload-Header-Content-Length", content_length)
-        .header("X-Goog-Upload-Header-Content-Type", content_type)
-        .json(&GeminiUploadRequest {
-            file: GeminiUploadDisplayName {
-                display_name: file_name.into(),
-            },
-        })
-        .send()
-        .await?;
-
-    let url = response
-        .headers()
-        .get("x-goog-upload-url")
-        .and_then(|value| value.to_str().ok().map(String::from))
-        .ok_or_else(|| anyhow::anyhow!("no upload url"))?;
-
-    Ok(url)
-}
-
-async fn finalize_upload(
-    client: &reqwest::Client,
-    url: String,
-    content_length: &str,
-    body: Vec<u8>,
-) -> anyhow::Result<String> {
-    let response = client
-        .post(url)
-        .header(CONTENT_LENGTH, content_length)
-        .header("X-Goog-Upload-Offset", "0")
-        .header("X-Goog-Upload-Command", "upload, finalize")
-        .body(body)
-        .send()
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
-
-    let uri = response["file"]["uri"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("no uri"))?;
-
-    Ok(uri.into())
 }
