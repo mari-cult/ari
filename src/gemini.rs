@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use reqwest::{
     header::{HeaderName, HeaderValue, CONTENT_LENGTH},
     Client,
@@ -24,6 +26,25 @@ const ZERO: HeaderValue = HeaderValue::from_static("0");
 pub struct GeminiRequest {
     pub system_instruction: GeminiSystemInstruction,
     pub contents: Vec<GeminiMessage>,
+    #[serde(rename = "safetySettings")]
+    pub safety_settings: Vec<GeminiSafetySetting>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(tag = "category", content = "threshold")]
+pub enum GeminiSafetySetting {
+    HarmCategoryHarassment(GeminiSafetyThreshold),
+    HarmCategoryHateSpeech(GeminiSafetyThreshold),
+    HarmCategorySexuallyExplicit(GeminiSafetyThreshold),
+    HarmCategoryDangerousContent(GeminiSafetyThreshold),
+    HarmCategoryCivicIntegrity(GeminiSafetyThreshold),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum GeminiSafetyThreshold {
+    BlockNone,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -47,6 +68,7 @@ pub struct GeminiResponse {
 #[serde(rename_all = "camelCase")]
 pub struct GeminiUsageMetadata {
     pub prompt_token_count: u32,
+    #[serde(default)]
     pub candidates_token_count: u32,
     pub total_token_count: u32,
 }
@@ -67,19 +89,30 @@ impl GeminiMessage {
         Self { role, parts }
     }
 
-    pub fn single(role: GeminiRole, text: String) -> Self {
+    pub fn new_single(role: GeminiRole, text: String) -> Self {
         Self::new(role, vec![GeminiPart::from(text)])
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct GeminiPart {
-    pub text: String,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeminiPart {
+    Text(String),
+    FileData { mime_type: String, file_uri: String },
+}
+
+impl GeminiPart {
+    pub fn file(mime_type: String, file_uri: String) -> Self {
+        Self::FileData {
+            mime_type,
+            file_uri,
+        }
+    }
 }
 
 impl From<String> for GeminiPart {
     fn from(text: String) -> Self {
-        Self { text }
+        Self::Text(text)
     }
 }
 
@@ -100,14 +133,15 @@ struct GeminiFile<'a> {
     display_name: &'a str,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct GeminiFileResponse {
     file: GeminiFileUri,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct GeminiFileUri {
     uri: String,
+    state: String,
 }
 
 pub struct GeminiClient {
@@ -140,12 +174,11 @@ impl GeminiClient {
     pub async fn create_file(
         &self,
         file_name: &str,
-        content_length: u64,
+        content_length: u32,
         content_type: &str,
     ) -> anyhow::Result<String> {
         let url = self.with_base("upload/v1beta/files");
         let query = [("key", &self.api_key)];
-        let content_length = content_length.to_string();
         let request = GeminiCreateFile {
             file: GeminiFile {
                 display_name: file_name,
@@ -176,11 +209,11 @@ impl GeminiClient {
     pub async fn upload_file(
         &self,
         url: String,
-        content_length: u64,
+        content_length: u32,
         bytes: Vec<u8>,
     ) -> anyhow::Result<String> {
-        let content_length = content_length.to_string();
-        let response = self
+        let query = [("key", &self.api_key)];
+        let mut response = self
             .client
             .post(url)
             .header(CONTENT_LENGTH, content_length)
@@ -191,6 +224,25 @@ impl GeminiClient {
             .await?
             .json::<GeminiFileResponse>()
             .await?;
+
+        tracing::debug!("initial upload file response: {response:#?}");
+
+        while response.file.state == "PROCESSING" {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+
+            response.file = self
+                .client
+                .get(response.file.uri)
+                .query(&query)
+                .send()
+                .await
+                .inspect_err(|error| tracing::error!("processing file: {error}"))?
+                .json()
+                .await
+                .inspect_err(|error| tracing::error!("processing file: {error}"))?;
+
+            tracing::debug!("processing file response: {response:#?}");
+        }
 
         Ok(response.file.uri)
     }
@@ -206,63 +258,81 @@ impl GeminiClient {
             .json(&request)
             .send()
             .await?
-            .json::<GeminiResponse>()
+            .json::<serde_json::Value>()
             .await?;
+
+        tracing::debug!(
+            "generate response: {}",
+            serde_json::to_string_pretty(&response).unwrap()
+        );
+
+        let response =
+            serde_json::from_str::<GeminiResponse>(&serde_json::to_string(&response).unwrap())?;
 
         let content = response
             .candidates
             .into_iter()
             .flat_map(|candidate| candidate.content.parts)
-            .map(|part| part.text)
+            .flat_map(|part| match part {
+                GeminiPart::Text(text) => Some(text),
+                _ => None,
+            })
             .collect::<String>();
 
         Ok(content)
     }
+}
 
-    pub fn is_supported_audio_type(&self, content_type: &str) -> bool {
-        matches!(
-            content_type,
-            "audio/wav" | "audio/mp3" | "audio/aiff" | "audio/aac" | "audio/ogg" | "audio/flac"
-        )
-    }
+pub fn is_supported_audio_type(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "audio/wav" | "audio/mp3" | "audio/aiff" | "audio/aac" | "audio/ogg" | "audio/flac"
+    )
+}
 
-    pub fn is_supported_document_type(&self, content_type: &str) -> bool {
-        matches!(
-            content_type,
-            "application/pdf"
-                | "application/x-javascript"
-                | "text/javascript"
-                | "application/x-python"
-                | "text/x-python"
-                | "text/plain"
-                | "text/html"
-                | "text/css"
-                | "text/md"
-                | "text/csv"
-                | "text/xml"
-                | "text/rtf"
-        )
-    }
+pub fn is_supported_document_type(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "application/pdf"
+            | "application/x-javascript"
+            | "text/javascript"
+            | "application/x-python"
+            | "text/x-python"
+            | "text/plain"
+            | "text/html"
+            | "text/css"
+            | "text/md"
+            | "text/csv"
+            | "text/xml"
+            | "text/rtf"
+    )
+}
 
-    pub fn is_supported_image_type(&self, content_type: &str) -> bool {
-        matches!(
-            content_type,
-            "image/png" | "image/jpeg" | "image/webp" | "image/heic" | "image/heif"
-        )
-    }
+pub fn is_supported_image_type(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "image/png" | "image/jpeg" | "image/webp" | "image/heic" | "image/heif"
+    )
+}
 
-    pub fn is_supported_video_type(&self, content_type: &str) -> bool {
-        matches!(
-            content_type,
-            "video/mp4"
-                | "video/mpeg"
-                | "video/mov"
-                | "video/avi"
-                | "video/x-flv"
-                | "video/mpg"
-                | "video/webm"
-                | "video/wmv"
-                | "video/3gpp"
-        )
-    }
+pub fn is_supported_video_type(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "video/mp4"
+            | "video/mpeg"
+            | "video/mov"
+            | "video/avi"
+            | "video/x-flv"
+            | "video/mpg"
+            | "video/webm"
+            | "video/wmv"
+            | "video/3gpp"
+    )
+}
+
+pub fn is_supported_type(content_type: &str) -> bool {
+    is_supported_audio_type(content_type)
+        || is_supported_document_type(content_type)
+        || is_supported_image_type(content_type)
+        || is_supported_video_type(content_type)
 }

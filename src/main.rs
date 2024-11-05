@@ -1,10 +1,11 @@
 use dashmap::DashMap;
 use futures::StreamExt;
-use rand::distributions::DistString;
-use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
-use serde::{Deserialize, Serialize};
+use gemini::{
+    GeminiClient, GeminiMessage, GeminiPart, GeminiRequest, GeminiRole, GeminiSafetySetting,
+    GeminiSafetyThreshold, GeminiSystemPart,
+};
 use serenity::{
-    all::{Channel, GetMessages, Message, Settings},
+    all::{Message, Settings},
     async_trait,
     prelude::*,
 };
@@ -13,63 +14,8 @@ use std::{env, time::Duration};
 pub mod gemini;
 
 struct Claide {
-    gemini_api_key: String,
-    reqwest: reqwest::Client,
-    uploaded_files: DashMap<String, String>,
-}
-
-#[derive(Debug, Default, Serialize)]
-struct GeminiRequest {
-    system_instruction: GeminiSystemInstruction,
-    contents: Vec<GeminiMessage>,
-}
-
-#[derive(Debug, Default, Serialize)]
-struct GeminiSystemInstruction {
-    parts: Vec<GeminiSystemPart>,
-}
-
-#[derive(Debug, Default, Serialize)]
-struct GeminiSystemPart {
-    text: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GeminiResponse {
-    candidates: Vec<GeminiCandidate>,
-    usage_metadata: GeminiUsageMetadata,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GeminiUsageMetadata {
-    prompt_token_count: u32,
-    candidates_token_count: u32,
-    total_token_count: u32,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct GeminiCandidate {
-    content: GeminiMessage,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct GeminiMessage {
-    role: GeminiRole,
-    parts: Vec<GeminiPart>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct GeminiPart {
-    text: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum GeminiRole {
-    User,
-    Model,
+    gemini: GeminiClient,
+    seen: DashMap<String, (String, String)>,
 }
 
 impl Claide {
@@ -88,70 +34,116 @@ impl Claide {
             return Ok(());
         }
 
+        let messages = {
+            let Some(messages) = context.cache.channel_messages(message.channel_id) else {
+                return Err(anyhow::anyhow!("no channel messages"));
+            };
+
+            let mut messages = messages.values().collect::<Vec<_>>();
+
+            messages.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+
+            messages
+                .into_iter()
+                .map(|message| {
+                    let (user, role) = if message.author.id == current_user_id {
+                        ("Clyde", GeminiRole::Model)
+                    } else {
+                        let user = message
+                            .author
+                            .global_name
+                            .as_deref()
+                            .unwrap_or(&message.author.name);
+
+                        (user, GeminiRole::User)
+                    };
+
+                    let content = &message.content;
+                    let text = format!("{user}: {content}");
+
+                    let attachments = message
+                        .attachments
+                        .iter()
+                        .filter(|attachment| {
+                            attachment
+                                .content_type
+                                .as_deref()
+                                .is_some_and(gemini::is_supported_type)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    (role, text, attachments)
+                })
+                .collect::<Vec<_>>()
+        };
+
         let mut request = GeminiRequest::default();
 
         request.system_instruction.parts.push(GeminiSystemPart {
             text: "You are named Clyde - and are currently chatting in a Discord server. Communicate responses in lowercase, without punctuation, like a chat user. Don't prefix responses with your name:.".into(),
         });
 
-        {
-            let Some(messages) = context.cache.channel_messages(message.channel_id) else {
-                return Err(anyhow::anyhow!("no channel messages"));
-            };
+        let settings = [
+            GeminiSafetySetting::HarmCategoryHarassment,
+            GeminiSafetySetting::HarmCategoryHateSpeech,
+            GeminiSafetySetting::HarmCategorySexuallyExplicit,
+            GeminiSafetySetting::HarmCategoryDangerousContent,
+            GeminiSafetySetting::HarmCategoryCivicIntegrity,
+        ];
 
-            for message in messages.values() {
-                let (user, role) = if message.author.id == current_user_id {
-                    ("Clyde", GeminiRole::Model)
-                } else {
-                    let user = message
-                        .author
-                        .global_name
-                        .as_deref()
-                        .unwrap_or(&message.author.name);
+        let settings = settings.map(|setting| (setting)(GeminiSafetyThreshold::BlockNone));
 
-                    (user, GeminiRole::User)
-                };
+        request.safety_settings.extend(settings);
 
-                let content = &message.content;
-                let text = format!("{user}: {content}");
+        for (role, text, attachments) in messages {
+            let iter = attachments.into_iter().map(|attachment| async move {
+                if let Some(pair) = self.seen.get(&attachment.url) {
+                    let (key, val) = pair.value();
 
-                tracing::debug!("add message {role:?} {text:?}");
+                    return Ok((key.clone(), val.clone()));
+                }
 
-                request.contents.push(GeminiMessage {
-                    role,
-                    parts: vec![GeminiPart { text }],
-                });
-            }
+                let file_name = &attachment.filename;
+                let content_length = attachment.size;
+                let content_type = attachment.content_type.as_deref().unwrap();
+                let bytes = attachment.download().await?;
+
+                let url = self
+                    .gemini
+                    .create_file(file_name, content_length, content_type)
+                    .await?;
+
+                let uri = self.gemini.upload_file(url, content_length, bytes).await?;
+                let pair = (content_type.to_string(), uri);
+
+                self.seen.insert(attachment.url, pair.clone());
+
+                anyhow::Ok(pair)
+            });
+
+            let iter = futures::stream::iter(iter)
+                .buffered(3)
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .flatten()
+                .map(|(content_type, file_uri)| GeminiPart::file(content_type, file_uri));
+
+            let mut parts = vec![GeminiPart::from(text)];
+
+            parts.extend(iter);
+
+            request.contents.push(GeminiMessage::new(role, parts));
         }
 
         if request.contents.is_empty() {
             return Err(anyhow::anyhow!("request is empty"));
         }
 
-        tracing::debug!("send request: {request:?}");
+        tracing::debug!("send request: {request:#?}");
 
-        let response = self.reqwest
-            .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent")
-            .query(&[("key", &self.gemini_api_key)])
-            .json(&request)
-            .send()
-            .await?
-            .text()
-            .await?;
-
-        tracing::debug!("got response: {response:?}");
-
-        let response = serde_json::from_str::<GeminiResponse>(&response)?;
-
-        tracing::debug!("parsed response: {response:?}");
-
-        let content = response
-            .candidates
-            .into_iter()
-            .flat_map(|candidate| candidate.content.parts)
-            .map(|part| part.text)
-            .collect::<String>();
-
+        let content = self.gemini.generate(request).await?;
         let content = content.trim();
 
         if content.is_empty() {
@@ -180,8 +172,6 @@ async fn main() -> anyhow::Result<()> {
 
     let discord_token = env::var("DISCORD_TOKEN")?;
     let gemini_api_key = env::var("GEMINI_API_KEY")?;
-    let reqwest = reqwest::Client::new();
-
     let mut cache_settings = Settings::default();
 
     cache_settings.max_messages = 500;
@@ -190,9 +180,8 @@ async fn main() -> anyhow::Result<()> {
     let mut client = Client::builder(discord_token, GatewayIntents::all())
         .cache_settings(cache_settings)
         .event_handler(Claide {
-            gemini_api_key,
-            reqwest,
-            uploaded_files: DashMap::new(),
+            gemini: GeminiClient::new(gemini_api_key),
+            seen: DashMap::new(),
         })
         .await?;
 
