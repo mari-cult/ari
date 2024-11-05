@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use futures::StreamExt;
 use rand::distributions::DistString;
-use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use reqwest::header::{HeaderName, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serenity::{
     all::{Channel, GetMessages, Message, Settings},
@@ -9,8 +9,6 @@ use serenity::{
     prelude::*,
 };
 use std::{env, time::Duration};
-
-mod gemini;
 
 struct Claide {
     gemini_api_key: String,
@@ -286,36 +284,21 @@ struct GeminiUploadDisplayName {
     display_name: String,
 }
 
-async fn start_upload(
-    client: &reqwest::Client,
-    gemini_api_key: &str,
-    content_length: &str,
-    content_type: &str,
-    file_name: &str,
-) -> anyhow::Result<String> {
-    let response = client
-        .post("https://generativelanguage.googleapis.com/upload/v1beta/files")
-        .query(&[("key", gemini_api_key)])
-        .header("X-Goog-Upload-Protocol", "resumable")
-        .header("X-Goog-Upload-Command", "start")
-        .header("X-Goog-Upload-Header-Content-Length", content_length)
-        .header("X-Goog-Upload-Header-Content-Type", content_type)
-        .json(&GeminiUploadRequest {
-            file: GeminiUploadDisplayName {
-                display_name: file_name.into(),
-            },
-        })
-        .send()
-        .await?;
+const BASE_URL: &str = "https://generativelanguage.googleapis.com";
 
-    let url = response
-        .headers()
-        .get("x-goog-upload-url")
-        .and_then(|value| value.to_str().ok().map(String::from))
-        .ok_or_else(|| anyhow::anyhow!("no upload url"))?;
+const X_GOOG_UPLOAD_COMMAND: HeaderName = HeaderName::from_static("x-goog-upload-command");
+const X_GOOG_UPLOAD_HEADER_CONTENT_LENGTH: HeaderName =
+    HeaderName::from_static("x-goog-upload-header-content-length");
+const X_GOOG_UPLOAD_HEADER_CONTENT_TYPE: HeaderName =
+    HeaderName::from_static("x-goog-upload-header-content-type");
+const X_GOOG_UPLOAD_OFFSET: HeaderName = HeaderName::from_static("x-goog-upload-offset");
+const X_GOOG_UPLOAD_PROTOCOL: HeaderName = HeaderName::from_static("x-goog-upload-protocol");
+const X_GOOG_UPLOAD_URL: HeaderName = HeaderName::from_static("x-goog-upload-url");
 
-    Ok(url)
-}
+const RESUMABLE: HeaderValue = HeaderValue::from_static("resumable");
+const START: HeaderValue = HeaderValue::from_static("start");
+const UPLOAD_FINALIZE: HeaderValue = HeaderValue::from_static("upload, finalize");
+const ZERO: HeaderValue = HeaderValue::from_static("0");
 
 async fn finalize_upload(
     client: &reqwest::Client,
@@ -326,8 +309,8 @@ async fn finalize_upload(
     let response = client
         .post(url)
         .header(CONTENT_LENGTH, content_length)
-        .header("X-Goog-Upload-Offset", "0")
-        .header("X-Goog-Upload-Command", "upload, finalize")
+        .header(X_GOOG_UPLOAD_OFFSET, ZERO)
+        .header(X_GOOG_UPLOAD_COMMAND, UPLOAD_FINALIZE)
         .body(body)
         .send()
         .await?
@@ -339,4 +322,67 @@ async fn finalize_upload(
         .ok_or_else(|| anyhow::anyhow!("no uri"))?;
 
     Ok(uri.into())
+}
+
+pub struct Client {
+    api_key: String,
+    base_url: String,
+    client: reqwest::Client,
+}
+
+impl Client {
+    pub fn new(api_key: String) -> Self {
+        Self::new_with_client(api_key, reqwest::Client::new())
+    }
+
+    pub fn new_with_client(api_key: String, client: reqwest::Client) -> Self {
+        Self::new_with_base_url_and_client(api_key, BASE_URL.into(), client)
+    }
+
+    pub fn new_with_base_url_and_client(
+        api_key: String,
+        base_url: String,
+        client: reqwest::Client,
+    ) -> Self {
+        Self {
+            api_key,
+            base_url,
+            client,
+        }
+    }
+
+    fn with_base(&self, path: &str) -> String {
+        format!("{}/{path}", self.base_url)
+    }
+
+    async fn create_file(
+        &self,
+        file_name: &str,
+        content_length: u64,
+        content_type: &str,
+    ) -> anyhow::Result<String> {
+        let url = self.with_base("upload/v1beta/files");
+        let query = [("key", &self.api_key)];
+        let content_length = content_length.to_string();
+
+        let response = self
+            .client
+            .post(url)
+            .query(&query)
+            .header(X_GOOG_UPLOAD_PROTOCOL, RESUMABLE)
+            .header(X_GOOG_UPLOAD_COMMAND, START)
+            .header(X_GOOG_UPLOAD_HEADER_CONTENT_LENGTH, content_length)
+            .header(X_GOOG_UPLOAD_HEADER_CONTENT_TYPE, content_type)
+            .json(&request)
+            .send()
+            .await?;
+
+        let url = response
+            .headers()
+            .get(X_GOOG_UPLOAD_URL)
+            .and_then(|value| value.to_str().map(String::from).ok())
+            .ok_or_else(|| anyhow::anyhow!("missing expected x-goog-upload-url"))?;
+
+        Ok(url)
+    }
 }
