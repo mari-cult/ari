@@ -327,6 +327,7 @@ pub fn is_supported_video_type(content_type: &str) -> bool {
         "video/mp4"
             | "video/mpeg"
             | "video/mov"
+            | "video/quicktime"
             | "video/avi"
             | "video/x-flv"
             | "video/mpg"
