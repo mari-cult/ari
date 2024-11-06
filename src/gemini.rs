@@ -286,7 +286,13 @@ impl GeminiClient {
 pub fn is_supported_audio_type(content_type: &str) -> bool {
     matches!(
         content_type,
-        "audio/wav" | "audio/mp3" | "audio/aiff" | "audio/aac" | "audio/ogg" | "audio/flac"
+        "audio/wav"
+            | "audio/mpeg"
+            | "audio/mp3"
+            | "audio/aiff"
+            | "audio/aac"
+            | "audio/ogg"
+            | "audio/flac"
     )
 }
 
