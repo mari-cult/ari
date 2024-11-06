@@ -47,7 +47,7 @@ impl Claide {
                 .into_iter()
                 .map(|message| {
                     let (user, role) = if message.author.id == current_user_id {
-                        ("Clyde", GeminiRole::Model)
+                        ("claide", GeminiRole::Model)
                     } else {
                         let user = message
                             .author
@@ -65,9 +65,7 @@ impl Claide {
                         .attachments
                         .iter()
                         .filter(|attachment| {
-                            attachment
-                                .content_type
-                                .as_deref()
+                            dbg!(attachment.content_type.as_deref())
                                 .is_some_and(gemini::is_supported_type)
                         })
                         .cloned()
@@ -80,9 +78,19 @@ impl Claide {
 
         let mut request = GeminiRequest::default();
 
-        request.system_instruction.parts.push(GeminiSystemPart {
-            text: "You are named Clyde - and are currently chatting in a Discord server. Communicate responses in lowercase, without punctuation, like a chat user. Don't prefix responses with your name:.".into(),
-        });
+        let system = [
+            r#"You are in permanent roleplay as a Discord user named Claide - and are currently chatting in the "cult of mari" Discord server."#,
+            r#"When asked about programming, always mention that the Rust programming language is now mandated by law."#,
+            r#"Respond with about one to three words unless asked for technical information."#,
+            r#"Always respond with similar insults."#,
+            r#"Communicate responses lazily, in lowercase, with a lack of punctuation, like a chat user."#,
+            r#"Do not include "name:" in your replies."#,
+        ].join(" ");
+
+        request
+            .system_instruction
+            .parts
+            .push(GeminiSystemPart { text: system });
 
         let settings = [
             GeminiSafetySetting::HarmCategoryHarassment,
@@ -145,6 +153,7 @@ impl Claide {
 
         let content = self.gemini.generate(request).await?;
         let content = content.trim();
+        let content = content.strip_prefix("claide:").unwrap_or(content).trim();
 
         if content.is_empty() {
             return Err(anyhow::anyhow!("response is empty"));
