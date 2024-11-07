@@ -4,6 +4,7 @@ use gemini::{
     GeminiClient, GeminiMessage, GeminiPart, GeminiRequest, GeminiRole, GeminiSafetySetting,
     GeminiSafetyThreshold, GeminiSystemPart,
 };
+use mime::Mime;
 use serenity::{
     all::{CreateAttachment, CreateMessage, Message, Settings},
     async_trait,
@@ -65,8 +66,11 @@ impl Claide {
                         .attachments
                         .iter()
                         .filter(|attachment| {
-                            dbg!(attachment.content_type.as_deref())
-                                .is_some_and(gemini::is_supported_type)
+                            attachment
+                                .content_type
+                                .as_deref()
+                                .and_then(|content_type| content_type.parse::<Mime>().ok())
+                                .is_some_and(|mime| gemini::is_supported_mime(&mime))
                         })
                         .cloned()
                         .collect::<Vec<_>>();
@@ -115,16 +119,28 @@ impl Claide {
 
                 let file_name = &attachment.filename;
                 let content_length = attachment.size;
-                let content_type = attachment.content_type.as_deref().unwrap();
+                let content_type = attachment
+                    .content_type
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Mime>()
+                    .unwrap();
+
+                let content_type = format!(
+                    "{}/{}",
+                    content_type.type_().as_str(),
+                    content_type.subtype().as_str()
+                );
+
                 let bytes = attachment.download().await?;
 
                 let url = self
                     .gemini
-                    .create_file(file_name, content_length, content_type)
+                    .create_file(file_name, content_length, &content_type)
                     .await?;
 
                 let uri = self.gemini.upload_file(url, content_length, bytes).await?;
-                let pair = (content_type.to_string(), uri);
+                let pair = (content_type, uri);
 
                 self.seen.insert(attachment.url, pair.clone());
 

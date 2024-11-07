@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use mime::Mime;
 use reqwest::{
     header::{HeaderName, HeaderValue, CONTENT_LENGTH},
     Client,
@@ -283,63 +284,44 @@ impl GeminiClient {
     }
 }
 
-pub fn is_supported_audio_type(content_type: &str) -> bool {
-    matches!(
-        content_type,
-        "audio/wav"
-            | "audio/mpeg"
-            | "audio/mp3"
-            | "audio/aiff"
-            | "audio/aac"
-            | "audio/ogg"
-            | "audio/flac"
-    )
-}
+pub fn is_supported_mime(mime: &Mime) -> bool {
+    let mime = (mime.type_().as_str(), mime.subtype().as_str());
 
-pub fn is_supported_document_type(content_type: &str) -> bool {
     matches!(
-        content_type,
-        "application/pdf"
-            | "application/x-javascript"
-            | "text/javascript"
-            | "application/x-python"
-            | "text/x-python"
-            | "text/plain"
-            | "text/html"
-            | "text/css"
-            | "text/md"
-            | "text/csv"
-            | "text/xml"
-            | "text/rtf"
+        mime,
+        ("audio", "wav")
+            | ("audio", "mpeg")
+            | ("audio", "mp3")
+            | ("audio", "aiff")
+            | ("audio", "aac")
+            | ("audio", "ogg")
+            | ("audio", "flac")
+            | ("application", "pdf")
+            | ("application", "x-javascript")
+            | ("text", "javascript")
+            | ("application", "x-python")
+            | ("text", "x-python")
+            | ("text", "plain")
+            | ("text", "html")
+            | ("text", "css")
+            | ("text", "md")
+            | ("text", "csv")
+            | ("text", "xml")
+            | ("text", "rtf")
+            | ("image", "png")
+            | ("image", "jpeg")
+            | ("image", "webp")
+            | ("image", "heic")
+            | ("image", "heif")
+            | ("video", "mp4")
+            | ("video", "mpeg")
+            | ("video", "mov")
+            | ("video", "quicktime")
+            | ("video", "avi")
+            | ("video", "x-flv")
+            | ("video", "mpg")
+            | ("video", "webm")
+            | ("video", "wmv")
+            | ("video", "3gpp")
     )
-}
-
-pub fn is_supported_image_type(content_type: &str) -> bool {
-    matches!(
-        content_type,
-        "image/png" | "image/jpeg" | "image/webp" | "image/heic" | "image/heif"
-    )
-}
-
-pub fn is_supported_video_type(content_type: &str) -> bool {
-    matches!(
-        content_type,
-        "video/mp4"
-            | "video/mpeg"
-            | "video/mov"
-            | "video/quicktime"
-            | "video/avi"
-            | "video/x-flv"
-            | "video/mpg"
-            | "video/webm"
-            | "video/wmv"
-            | "video/3gpp"
-    )
-}
-
-pub fn is_supported_type(content_type: &str) -> bool {
-    is_supported_audio_type(content_type)
-        || is_supported_document_type(content_type)
-        || is_supported_image_type(content_type)
-        || is_supported_video_type(content_type)
 }
