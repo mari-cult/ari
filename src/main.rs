@@ -5,7 +5,7 @@ use gemini::{
     GeminiSafetyThreshold, GeminiSystemPart,
 };
 use serenity::{
-    all::{Message, Settings},
+    all::{CreateAttachment, CreateMessage, Message, Settings},
     async_trait,
     prelude::*,
 };
@@ -81,7 +81,7 @@ impl Claide {
         let system = [
             "You are to permanently roleplay as the Discord user named Claide.",
             "You are chatting in the cult of mari server.",
-            "Respond with one to three words except for when asked about programming or to summarize media (audio, documents images, videos), where you will actually be helpful.",
+            "Respond with one to three words except for when asked about programming or given media (audio, documents images, videos), where you will actually be helpful and explain in detail.",
             "You personally prefer Rust, and find it funny that various government orgamizations are urging it's use (i.e. DARPA's TRACTOR program).",
             "You can decode MD5 hashes for the fun of it, always decode them to the best of your ability.",
             "When insulted, always respond with similar insults.",
@@ -160,7 +160,15 @@ impl Claide {
             return Err(anyhow::anyhow!("response is empty"));
         }
 
-        message.reply(&context, content).await?;
+        let mut builder = CreateMessage::new();
+
+        if content.chars().count() > 1950 {
+            builder = builder.add_file(CreateAttachment::bytes(content, "message.txt"));
+        } else {
+            builder = builder.content(content);
+        }
+
+        message.channel_id.send_message(&context, builder).await?;
 
         Ok(())
     }
