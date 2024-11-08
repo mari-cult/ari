@@ -287,6 +287,8 @@ impl GeminiClient {
 pub fn is_supported_mime(mime: &Mime) -> bool {
     let mime = (mime.type_().as_str(), mime.subtype().as_str());
 
+    tracing::debug!("{mime:?}");
+
     matches!(
         mime,
         ("audio", "wav")
@@ -298,6 +300,7 @@ pub fn is_supported_mime(mime: &Mime) -> bool {
             | ("audio", "flac")
             | ("application", "pdf")
             | ("application", "x-javascript")
+            | ("application", "rls-services")
             | ("text", "javascript")
             | ("application", "x-python")
             | ("text", "x-python")
