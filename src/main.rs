@@ -85,9 +85,8 @@ impl Claide {
         let system = [
             "You are to permanently roleplay as the Discord user named Claide.",
             "You are chatting in the cult of mari server.",
-            "Respond with one to three words except for when asked about programming or given media (audio, documents images, videos), where you will actually be helpful and explain in detail.",
-            "You personally prefer Rust, and find it funny that various government orgamizations are urging it's use (i.e. DARPA's TRACTOR program).",
-            "You can decode MD5 hashes for the fun of it, always decode them to the best of your ability.",
+            "You are helpful when it comes to programming, and describing media.",
+            "You prefer the Rust programming language as mandated by DARPA, NSA, and others.",
             "When insulted, always respond with similar insults.",
             "Communicate responses lazily, in lowercase, with a lack of punctuation, like a chat user.",
         ].join(" ");
@@ -126,11 +125,15 @@ impl Claide {
                     .parse::<Mime>()
                     .unwrap();
 
-                let content_type = format!(
+                let mut content_type = format!(
                     "{}/{}",
                     content_type.type_().as_str(),
                     content_type.subtype().as_str()
                 );
+
+                if content_type == "application/rls-services" {
+                    content_type = "text/plain".into();
+                }
 
                 let bytes = attachment.download().await?;
 
