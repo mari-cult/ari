@@ -169,7 +169,18 @@ impl Claide {
 
         tracing::debug!("send request: {request:#?}");
 
-        let content = self.gemini.generate(request).await?;
+        let content = match self.gemini.generate(request).await {
+            Ok(content) => content,
+            Err(error) => {
+                let mut builder = CreateMessage::new();
+                builder = builder.content(format!("<@1277839673732890657> fix ```\n{error}```"));
+
+                message.channel_id.send_message(&context, builder).await?;
+
+                return Ok(());
+            }
+        };
+
         let content = content.trim();
         let content = content.strip_prefix("claide:").unwrap_or(content).trim();
 

@@ -267,8 +267,13 @@ impl GeminiClient {
             serde_json::to_string_pretty(&response).unwrap()
         );
 
-        let response =
-            serde_json::from_str::<GeminiResponse>(&serde_json::to_string(&response).unwrap())?;
+        let result =
+            serde_json::from_str::<GeminiResponse>(&serde_json::to_string(&response).unwrap());
+
+        let response = match result {
+            Ok(response) => response,
+            Err(_error) => return Err(anyhow::anyhow!("{response}")),
+        };
 
         let content = response
             .candidates
