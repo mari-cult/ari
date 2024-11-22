@@ -173,7 +173,9 @@ impl Claide {
             Ok(content) => content,
             Err(error) => {
                 let mut builder = CreateMessage::new();
-                builder = builder.content(format!("<@1277839673732890657> fix ```\n{error}```"));
+                builder = builder.content(format!(
+                    "<@1277839673732890657> <@&1308647289589334067> fix ```\n{error}```"
+                ));
 
                 message.channel_id.send_message(&context, builder).await?;
 
@@ -223,13 +225,16 @@ async fn main() -> anyhow::Result<()> {
     cache_settings.max_messages = 500;
     cache_settings.time_to_live = Duration::from_secs(24 * 60 * 60);
 
-    let mut client = Client::builder(discord_token, GatewayIntents::all())
-        .cache_settings(cache_settings)
-        .event_handler(Claide {
-            gemini: GeminiClient::new(gemini_api_key),
-            seen: DashMap::new(),
-        })
-        .await?;
+    let mut client = Client::builder(
+        discord_token,
+        GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILD_MESSAGES,
+    )
+    .cache_settings(cache_settings)
+    .event_handler(Claide {
+        gemini: GeminiClient::new(gemini_api_key),
+        seen: DashMap::new(),
+    })
+    .await?;
 
     client.start().await?;
 
