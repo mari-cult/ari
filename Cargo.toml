@@ -4,29 +4,21 @@ version = "0.5.0"
 edition = "2021"
 
 [dependencies]
-anyhow = { version = "1.0", default-features = false, features = ["std"] }
-dashmap = { version = "6.1.0", default-features = false }
-dotenvy = { version = "0.15", default-features = false }
+anyhow = "1.0"
+dashmap = "6.1.0"
+dotenvy = "0.15"
 futures = { version = "0.3", default-features = false, features = ["std"] }
-mime = { version = "0.3.17", default-features = false }
-rand = { version = "0.8", default-features = false, features = ["std_rng"] }
-reqwest = { version = "0.12", default-features = false, features = ["brotli", "cookies", "deflate", "gzip", "http2", "json", "multipart", "native-tls-alpn", "stream"] }
-serde = { version = "1.0", default-features = false, features = [
-    "derive",
-    "std",
-] }
-serde_json = { version = "1.0", default-features = false, features = ["std"] }
-textwrap = { version = "0.16", default-features = false, features = [
-    "hyphenation",
-    "smawk",
-    "unicode-linebreak",
-    "unicode-width",
-] }
-time = { version = "0.3", default-features = false, features = [
+mime = "0.3.17"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["brotli", "gzip", "http2", "json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+textwrap = { version = "0.16", features = ["hyphenation"] }
+time = { version = "0.3", features = [
     "formatting",
     "macros",
 ] }
-tokio = { version = "1.41", default-features = false, features = [
+tokio = { version = "1.41", features = [
     "macros",
     "rt-multi-thread",
     "signal",
