@@ -37,7 +37,7 @@ impl Default for AttachmentContent<'_> {
         Self {
             content_type: DEFAULT_FILE_NAME.into(),
             file_name: None,
-            bytes: Vec::new(),
+            bytes: "[empty]".into(),
         }
     }
 }
