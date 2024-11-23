@@ -32,6 +32,16 @@ pub struct AttachmentContent<'a> {
     bytes: Vec<u8>,
 }
 
+impl Default for AttachmentContent<'_> {
+    fn default() -> Self {
+        Self {
+            content_type: DEFAULT_FILE_NAME.into(),
+            file_name: None,
+            bytes: Vec::new(),
+        }
+    }
+}
+
 impl<'a> AttachmentContent<'a> {
     fn new(
         content_type: Option<Cow<'a, str>>,
@@ -76,7 +86,11 @@ pub trait GeminiUpload {
 
     /// Upload this to gemini
     async fn upload_into_gemini(&self, claide: &Claide) -> anyhow::Result<GeminiAttachment> {
-        let content = self.fetch_content(claide).await?;
+        let content = self
+            .fetch_content(claide)
+            .await
+            .inspect_err(|err| tracing::warn!("fetch failed: {err}"))
+            .unwrap_or_default();
         let content_type = content.content_type.clone();
         let uri = content.upload(&claide.gemini).await?;
 
