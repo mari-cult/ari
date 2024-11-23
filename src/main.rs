@@ -165,7 +165,10 @@ impl Claide {
             Ok(content) => content,
             Err(error) => {
                 let mut builder = CreateMessage::new();
-                builder = builder.content(format!("<@&1308647289589334067> fix ```\n{error}```"));
+                builder = builder.content(format!(
+                    "<@{}> fix <@&1308647289589334067> fix ```\n{}```",
+                    self.config.owner_id, error
+                ));
 
                 message.channel_id.send_message(&context, builder).await?;
 
