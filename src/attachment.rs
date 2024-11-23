@@ -115,7 +115,13 @@ impl GeminiUpload for Url {
         let file_name = self.path_segments().and_then(|path| path.last());
 
         tracing::info!("downloading from url: {file_name:?}: {self}");
-        let resp = claide.http_client.get(self.clone()).send().await?;
+        let resp = claide
+            .http_client
+            .get(self.clone())
+            .send()
+            .await?
+            .error_for_status()?;
+
         let content_type = resp
             .headers()
             .get(CONTENT_TYPE)
