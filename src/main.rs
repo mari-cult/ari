@@ -1,3 +1,5 @@
+use attachment::{AnyAttachment, Attachment};
+use config::{ClydeConfig, Config};
 use dashmap::DashMap;
 use futures::StreamExt;
 use gemini::{
@@ -5,18 +7,26 @@ use gemini::{
     GeminiSafetyThreshold, GeminiSystemPart,
 };
 use mime::Mime;
+use regex::Regex;
+use reqwest::Url;
 use serenity::{
     all::{CreateAttachment, CreateMessage, Message, Settings},
     async_trait,
     prelude::*,
 };
-use std::{env, time::Duration};
+use std::{sync::LazyLock, time::Duration};
 
-pub mod gemini;
+mod attachment;
+mod config;
+mod gemini;
+
+static REGEX_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bhttps://\S+").unwrap());
 
 struct Claide {
+    config: ClydeConfig,
     gemini: GeminiClient,
     seen: DashMap<String, (String, String)>,
+    http_client: reqwest::Client,
 }
 
 impl Claide {
@@ -35,34 +45,42 @@ impl Claide {
             return Ok(());
         }
 
-        let messages = {
-            let Some(messages) = context.cache.channel_messages(message.channel_id) else {
-                return Err(anyhow::anyhow!("no channel messages"));
+        let previous_messages = {
+            let Some(cached_messages) = context.cache.channel_messages(message.channel_id) else {
+                anyhow::bail!("no channel messages");
             };
 
-            let mut messages = messages.values().collect::<Vec<_>>();
+            let mut messages = cached_messages.values().collect::<Vec<_>>();
 
             messages.sort_unstable_by(|a, b| a.id.cmp(&b.id));
 
-            messages
-                .into_iter()
-                .map(|message| {
-                    let (user, role) = if message.author.id == current_user_id {
-                        ("claide", GeminiRole::Model)
-                    } else {
-                        let user = message
-                            .author
-                            .global_name
-                            .as_deref()
-                            .unwrap_or(&message.author.name);
+            let mut previous_messages = Vec::with_capacity(messages.len());
+            for message in messages {
+                let (user, role) = if message.author.id == current_user_id {
+                    ("claide", GeminiRole::Model)
+                } else {
+                    let user = message
+                        .author
+                        .global_name
+                        .as_deref()
+                        .unwrap_or(&message.author.name);
 
-                        (user, GeminiRole::User)
-                    };
+                    (user, GeminiRole::User)
+                };
 
-                    let content = &message.content;
-                    let text = format!("{user}: {content}");
+                let mut attachments = Vec::new();
 
-                    let attachments = message
+                let content = &message.content;
+                attachments.extend(
+                    REGEX_URL
+                        .find_iter(content)
+                        .map(|m| m.as_str())
+                        .filter_map(|s| Url::try_from(s).ok())
+                        .filter(|url| self.config.whitelisted_domains.url_matches(url))
+                        .map(AnyAttachment::Url),
+                );
+                attachments.extend(
+                    message
                         .attachments
                         .iter()
                         .filter(|attachment| {
@@ -73,11 +91,13 @@ impl Claide {
                                 .is_some_and(|mime| gemini::is_supported_mime(&mime))
                         })
                         .cloned()
-                        .collect::<Vec<_>>();
+                        .map(AnyAttachment::Discord),
+                );
 
-                    (role, text, attachments)
-                })
-                .collect::<Vec<_>>()
+                previous_messages.push((role, format!("{user}: {content}"), attachments));
+            }
+
+            previous_messages
         };
 
         let mut request = GeminiRequest::default();
@@ -106,49 +126,21 @@ impl Claide {
 
         request.safety_settings.extend(settings);
 
-        for (role, text, attachments) in messages {
-            let iter = attachments.into_iter().map(|attachment| async move {
-                if let Some(pair) = self.seen.get(&attachment.url) {
-                    let (key, val) = pair.value();
+        for (role, text, attachments) in previous_messages {
+            let attachment = attachments.into_iter().map(|attachment| async move {
+                anyhow::Ok(match self.seen.entry(attachment.url().to_string()) {
+                    dashmap::Entry::Occupied(occupied) => occupied.get().clone(),
+                    dashmap::Entry::Vacant(vacant) => {
+                        let pair = attachment.upload_into_gemini(self).await?;
 
-                    return Ok((key.clone(), val.clone()));
-                }
+                        vacant.insert(pair.clone());
 
-                let file_name = &attachment.filename;
-                let content_length = attachment.size;
-                let content_type = attachment
-                    .content_type
-                    .as_deref()
-                    .unwrap()
-                    .parse::<Mime>()
-                    .unwrap();
-
-                let mut content_type = format!(
-                    "{}/{}",
-                    content_type.type_().as_str(),
-                    content_type.subtype().as_str()
-                );
-
-                if content_type == "application/rls-services" {
-                    content_type = "text/plain".into();
-                }
-
-                let bytes = attachment.download().await?;
-
-                let url = self
-                    .gemini
-                    .create_file(file_name, content_length, &content_type)
-                    .await?;
-
-                let uri = self.gemini.upload_file(url, content_length, bytes).await?;
-                let pair = (content_type, uri);
-
-                self.seen.insert(attachment.url, pair.clone());
-
-                anyhow::Ok(pair)
+                        pair
+                    }
+                })
             });
 
-            let iter = futures::stream::iter(iter)
+            let iter = futures::stream::iter(attachment)
                 .buffered(3)
                 .collect::<Vec<_>>()
                 .await
@@ -164,7 +156,7 @@ impl Claide {
         }
 
         if request.contents.is_empty() {
-            return Err(anyhow::anyhow!("request is empty"));
+            anyhow::bail!("request is empty");
         }
 
         tracing::debug!("send request: {request:#?}");
@@ -173,9 +165,7 @@ impl Claide {
             Ok(content) => content,
             Err(error) => {
                 let mut builder = CreateMessage::new();
-                builder = builder.content(format!(
-                    "<@1277839673732890657> <@&1308647289589334067> fix ```\n{error}```"
-                ));
+                builder = builder.content(format!("<@&1308647289589334067> fix ```\n{error}```"));
 
                 message.channel_id.send_message(&context, builder).await?;
 
@@ -187,7 +177,7 @@ impl Claide {
         let content = content.strip_prefix("claide:").unwrap_or(content).trim();
 
         if content.is_empty() {
-            return Err(anyhow::anyhow!("response is empty"));
+            anyhow::bail!("response is empty");
         }
 
         let mut builder = CreateMessage::new();
@@ -218,21 +208,22 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt::init();
 
-    let discord_token = env::var("DISCORD_TOKEN")?;
-    let gemini_api_key = env::var("GEMINI_API_KEY")?;
+    let config = Config::read("clyde.toml")?;
     let mut cache_settings = Settings::default();
 
     cache_settings.max_messages = 500;
     cache_settings.time_to_live = Duration::from_secs(24 * 60 * 60);
 
     let mut client = Client::builder(
-        discord_token,
+        config.discord.token,
         GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILD_MESSAGES,
     )
     .cache_settings(cache_settings)
     .event_handler(Claide {
-        gemini: GeminiClient::new(gemini_api_key),
+        config: config.clyde,
+        gemini: GeminiClient::new(config.gemini.token),
         seen: DashMap::new(),
+        http_client: reqwest::Client::new(),
     })
     .await?;
 
