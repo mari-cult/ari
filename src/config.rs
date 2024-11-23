@@ -76,6 +76,7 @@ impl<'de> Deserialize<'de> for DomainMatcher {
 
 #[derive(Debug, Deserialize)]
 pub struct ClydeConfig {
+    pub owner_id: u64,
     pub whitelisted_domains: DomainMatcher,
 }
 
