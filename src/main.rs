@@ -1,4 +1,4 @@
-use attachment::{Attachment, GeminiUpload};
+use attachment::{Attachment, GeminiAttachment, GeminiUpload};
 use config::{ClydeConfig, Config};
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -25,7 +25,7 @@ static REGEX_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bhttps://\S+"
 struct Claide {
     config: ClydeConfig,
     gemini: GeminiClient,
-    seen: DashMap<String, (String, String)>,
+    seen: DashMap<String, GeminiAttachment>,
     http_client: reqwest::Client,
 }
 
@@ -146,7 +146,7 @@ impl Claide {
                 .await
                 .into_iter()
                 .flatten()
-                .map(|(content_type, file_uri)| GeminiPart::file(content_type, file_uri));
+                .map(GeminiPart::from);
 
             let mut parts = vec![GeminiPart::from(text)];
 
