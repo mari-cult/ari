@@ -5,6 +5,7 @@ token = "abcde"
 token = "afaaffe"
 
 [clyde]
+# leave empty to disable filtering
 whitelisted_domains = [
     "discordapp.com",
 ]
