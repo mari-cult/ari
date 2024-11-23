@@ -41,11 +41,11 @@ async fn upload(
     gemini.upload_file(url, content_size, bytes).await
 }
 
-pub trait Attachment {
+pub trait GeminiUpload {
     async fn upload_into_gemini(self, claide: &Claide) -> Result<(String, String)>;
 }
 
-impl Attachment for serenity::all::Attachment {
+impl GeminiUpload for serenity::all::Attachment {
     async fn upload_into_gemini(self, claide: &Claide) -> Result<(String, String)> {
         let file_name = &self.filename;
         let content_type = sanitize_content_type(self.content_type.as_deref())?;
@@ -59,7 +59,7 @@ impl Attachment for serenity::all::Attachment {
     }
 }
 
-impl Attachment for Url {
+impl GeminiUpload for Url {
     async fn upload_into_gemini(self, claide: &Claide) -> Result<(String, String)> {
         let file_name = self
             .path_segments()
@@ -89,12 +89,12 @@ impl Attachment for Url {
     }
 }
 
-pub enum AnyAttachment {
+pub enum Attachment {
     Discord(serenity::all::Attachment),
     Url(Url),
 }
 
-impl AnyAttachment {
+impl Attachment {
     pub fn url(&self) -> &str {
         match self {
             Self::Discord(attachment) => &attachment.url,
@@ -103,11 +103,11 @@ impl AnyAttachment {
     }
 }
 
-impl Attachment for AnyAttachment {
+impl GeminiUpload for Attachment {
     async fn upload_into_gemini(self, claide: &Claide) -> Result<(String, String)> {
         match self {
-            AnyAttachment::Discord(discord) => discord.upload_into_gemini(claide).await,
-            AnyAttachment::Url(url) => url.upload_into_gemini(claide).await,
+            Attachment::Discord(discord) => discord.upload_into_gemini(claide).await,
+            Attachment::Url(url) => url.upload_into_gemini(claide).await,
         }
     }
 }

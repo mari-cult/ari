@@ -1,4 +1,4 @@
-use attachment::{AnyAttachment, Attachment};
+use attachment::{Attachment, GeminiUpload};
 use config::{ClydeConfig, Config};
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -77,7 +77,7 @@ impl Claide {
                         .map(|m| m.as_str())
                         .filter_map(|s| Url::try_from(s).ok())
                         .filter(|url| self.config.whitelisted_domains.url_matches(url))
-                        .map(AnyAttachment::Url),
+                        .map(Attachment::Url),
                 );
                 attachments.extend(
                     message
@@ -91,7 +91,7 @@ impl Claide {
                                 .is_some_and(|mime| gemini::is_supported_mime(&mime))
                         })
                         .cloned()
-                        .map(AnyAttachment::Discord),
+                        .map(Attachment::Discord),
                 );
 
                 previous_messages.push((role, format!("{user}: {content}"), attachments));
