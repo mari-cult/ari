@@ -1,0 +1,10 @@
+[discord]
+token = "abcde"
+
+[gemini]
+token = "afaaffe"
+
+[clyde]
+whitelisted_domains = [
+    "discordapp.com",
+]
