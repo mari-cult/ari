@@ -1,5 +1,6 @@
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
+use crate::attachment::GeminiAttachment;
 use mime::Mime;
 use reqwest::{
     header::{HeaderName, HeaderValue, CONTENT_LENGTH},
@@ -89,24 +90,23 @@ impl GeminiMessage {
     pub fn new(role: GeminiRole, parts: Vec<GeminiPart>) -> Self {
         Self { role, parts }
     }
-
-    pub fn new_single(role: GeminiRole, text: String) -> Self {
-        Self::new(role, vec![GeminiPart::from(text)])
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GeminiPart {
     Text(String),
-    FileData { mime_type: String, file_uri: String },
+    FileData {
+        mime_type: Cow<'static, str>,
+        file_uri: String,
+    },
 }
 
-impl GeminiPart {
-    pub fn file(mime_type: String, file_uri: String) -> Self {
+impl From<GeminiAttachment> for GeminiPart {
+    fn from(value: GeminiAttachment) -> Self {
         Self::FileData {
-            mime_type,
-            file_uri,
+            mime_type: value.content_type,
+            file_uri: value.uri,
         }
     }
 }
