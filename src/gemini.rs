@@ -249,7 +249,7 @@ impl GeminiClient {
     }
 
     pub async fn generate(&self, request: GeminiRequest) -> anyhow::Result<String> {
-        let url = self.with_base("v1beta/models/gemini-1.5-flash:generateContent");
+        let url = self.with_base("v1beta/models/gemini-2.0-flash-exp:generateContent");
         let query = [("key", &self.api_key)];
 
         let response = self
