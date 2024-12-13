@@ -1,6 +1,5 @@
 use attachment::{Attachment, GeminiAttachment, GeminiUpload};
 use config::{ClydeConfig, Config};
-use dashmap::DashMap;
 use futures::StreamExt;
 use gemini::{
     GeminiClient, GeminiMessage, GeminiPart, GeminiRequest, GeminiRole, GeminiSafetySetting,
@@ -14,7 +13,11 @@ use serenity::{
     async_trait,
     prelude::*,
 };
-use std::{sync::LazyLock, time::Duration};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    sync::LazyLock,
+    time::Duration,
+};
 
 mod attachment;
 mod config;
@@ -25,7 +28,7 @@ static REGEX_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bhttps://\S+"
 struct Claide {
     config: ClydeConfig,
     gemini: GeminiClient,
-    seen: DashMap<String, GeminiAttachment>,
+    seen: tokio::sync::Mutex<HashMap<String, GeminiAttachment>>,
     http_client: reqwest::Client,
 }
 
@@ -102,17 +105,9 @@ impl Claide {
 
         let mut request = GeminiRequest::default();
 
-        let system = [
-            "You are claide a software engineer for the cult of mari.",
-            "Respond like a Discord user - few words, lack of punctuation, always lowercase, occasional typos.",
-            "When asked about programming, provide your best effort response and code.",
-        ]
-        .join(" ");
-
-        request
-            .system_instruction
-            .parts
-            .push(GeminiSystemPart { text: system });
+        request.system_instruction.parts.push(GeminiSystemPart {
+            text: include_str!("personality.txt").into(),
+        });
 
         let settings = [
             GeminiSafetySetting::HarmCategoryHarassment,
@@ -128,16 +123,18 @@ impl Claide {
 
         for (role, text, attachments) in previous_messages {
             let attachment = attachments.into_iter().map(|attachment| async move {
-                anyhow::Ok(match self.seen.entry(attachment.url().to_string()) {
-                    dashmap::Entry::Occupied(occupied) => occupied.get().clone(),
-                    dashmap::Entry::Vacant(vacant) => {
-                        let pair = attachment.upload_into_gemini(self).await?;
+                anyhow::Ok(
+                    match self.seen.lock().await.entry(attachment.url().to_string()) {
+                        Entry::Occupied(occupied) => occupied.get().clone(),
+                        Entry::Vacant(vacant) => {
+                            let pair = attachment.upload_into_gemini(self).await?;
 
-                        vacant.insert(pair.clone());
+                            vacant.insert(pair.clone());
 
-                        pair
-                    }
-                })
+                            pair
+                        }
+                    },
+                )
             });
 
             let iter = futures::stream::iter(attachment)
@@ -225,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
     .event_handler(Claide {
         config: config.clyde,
         gemini: GeminiClient::new(config.gemini.token),
-        seen: DashMap::new(),
+        seen: Mutex::new(HashMap::new()),
         http_client: reqwest::Client::new(),
     })
     .await?;
