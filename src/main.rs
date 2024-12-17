@@ -1,6 +1,6 @@
-use attachment::{Attachment, GeminiAttachment, GeminiUpload};
-use futures::StreamExt;
-use gemini::{
+use self::attachment::{Attachment, GeminiAttachment, GeminiUpload};
+use futures_util::StreamExt;
+use google_gemini::{
     GeminiClient, GeminiMessage, GeminiPart, GeminiRequest, GeminiRole, GeminiSafetySetting,
     GeminiSafetyThreshold, GeminiSystemPart,
 };
@@ -17,7 +17,6 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 mod attachment;
-mod gemini;
 mod settings;
 
 static REGEX_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bhttps://\S+").unwrap());
@@ -88,7 +87,7 @@ impl Claide {
                                 .content_type
                                 .as_deref()
                                 .and_then(|content_type| content_type.parse::<Mime>().ok())
-                                .is_some_and(|mime| gemini::is_supported_mime(&mime))
+                                .is_some_and(|mime| google_gemini::is_supported_mime(&mime))
                         })
                         .cloned()
                         .map(Attachment::Discord),
@@ -134,7 +133,7 @@ impl Claide {
                 )
             });
 
-            let iter = futures::stream::iter(attachment)
+            let iter = futures_util::stream::iter(attachment)
                 .buffered(3)
                 .collect::<Vec<_>>()
                 .await
