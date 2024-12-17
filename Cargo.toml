@@ -7,6 +7,7 @@ edition = "2021"
 aho-corasick = "1.1.3"
 anyhow = "1.0"
 dotenvy = "0.15"
+figment = { version = "0.10.19", features = ["toml"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 mime = "0.3.17"
 rand = "0.8"

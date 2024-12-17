@@ -1,21 +1,16 @@
 use aho_corasick::{AhoCorasick, BuildError};
-use anyhow::Context;
+use figment::providers::{Format, Toml};
+use figment::Figment;
 use reqwest::Url;
-use serde::{de, Deserialize};
-use std::{borrow::Cow, fmt::Display, fs};
-
-#[derive(Debug, Deserialize)]
-pub struct DiscordConfig {
-    pub token: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct GeminiConfig {
-    pub token: String,
-}
+use serde::de::Error;
+use serde::{de, Deserialize, Deserializer, Serialize};
+use std::borrow::Cow;
+use std::fmt::Display;
+use std::fs;
+use std::path::PathBuf;
 
 /// Checks wether domain overlaps with given list
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DomainMatcher {
     backend: AhoCorasick,
 }
@@ -74,25 +69,36 @@ impl<'de> Deserialize<'de> for DomainMatcher {
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ClydeConfig {
-    pub owner_id: u64,
+#[derive(Clone, Debug, Deserialize)]
+pub struct DiscordSettings {
+    pub token: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct GeminiSettings {
+    pub api_key: String,
+    #[serde(default, deserialize_with = "deserialize_personality")]
+    pub personality: String,
     pub whitelisted_domains: DomainMatcher,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Config {
-    pub discord: DiscordConfig,
-    pub gemini: GeminiConfig,
-    pub clyde: ClydeConfig,
+#[derive(Clone, Debug, Deserialize)]
+pub struct Settings {
+    pub discord: DiscordSettings,
+    pub gemini: GeminiSettings,
 }
 
-impl Config {
-    pub fn read(path: &str) -> anyhow::Result<Self> {
-        let content = fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
+fn deserialize_personality<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let path = PathBuf::deserialize(deserializer)?;
 
-        toml::from_str(&content).with_context(|| format!("parsing {path}"))
-    }
+    fs::read_to_string(path).map_err(|error| Error::custom(error))
+}
+
+pub fn try_load() -> figment::Result<Settings> {
+    Figment::new().merge(Toml::file("Clyde.toml")).extract()
 }
 
 #[cfg(test)]

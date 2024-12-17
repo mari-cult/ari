@@ -1,5 +1,4 @@
 use attachment::{Attachment, GeminiAttachment, GeminiUpload};
-use config::{ClydeConfig, Config};
 use futures::StreamExt;
 use gemini::{
     GeminiClient, GeminiMessage, GeminiPart, GeminiRequest, GeminiRole, GeminiSafetySetting,
@@ -8,27 +7,25 @@ use gemini::{
 use mime::Mime;
 use regex::Regex;
 use reqwest::Url;
-use serenity::{
-    all::{CreateAttachment, CreateMessage, Message, Settings},
-    async_trait,
-    prelude::*,
-};
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    sync::LazyLock,
-    time::Duration,
-};
+use serenity::all::{CreateAttachment, CreateMessage, Message, Settings};
+use serenity::async_trait;
+use serenity::prelude::*;
+use settings::GeminiSettings;
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+use std::sync::LazyLock;
+use std::time::Duration;
 
 mod attachment;
-mod config;
 mod gemini;
+mod settings;
 
 static REGEX_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bhttps://\S+").unwrap());
 
 struct Claide {
-    config: ClydeConfig,
     gemini: GeminiClient,
     seen: tokio::sync::Mutex<HashMap<String, GeminiAttachment>>,
+    settings: GeminiSettings,
     http_client: reqwest::Client,
 }
 
@@ -79,7 +76,7 @@ impl Claide {
                         .find_iter(content)
                         .map(|m| m.as_str())
                         .filter_map(|s| Url::try_from(s).ok())
-                        .filter(|url| self.config.whitelisted_domains.url_matches(url))
+                        .filter(|url| self.settings.whitelisted_domains.url_matches(url))
                         .map(Attachment::Url),
                 );
                 attachments.extend(
@@ -162,10 +159,7 @@ impl Claide {
             Ok(content) => content,
             Err(error) => {
                 let mut builder = CreateMessage::new();
-                builder = builder.content(format!(
-                    "<@{}> fix <@&1308647289589334067> fix ```\n{}```",
-                    self.config.owner_id, error
-                ));
+                builder = builder.content(format!("```\n{error}```\n-# repor issue to mari",));
 
                 message.channel_id.send_message(&context, builder).await?;
 
@@ -205,24 +199,24 @@ impl EventHandler for Claide {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
+    let settings = settings::try_load()?;
+
     tracing_subscriber::fmt::init();
 
-    let config = Config::read("clyde.toml")?;
     let mut cache_settings = Settings::default();
 
     cache_settings.max_messages = 500;
     cache_settings.time_to_live = Duration::from_secs(24 * 60 * 60);
 
     let mut client = Client::builder(
-        config.discord.token,
+        settings.discord.token,
         GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILD_MESSAGES,
     )
     .cache_settings(cache_settings)
     .event_handler(Claide {
-        config: config.clyde,
-        gemini: GeminiClient::new(config.gemini.token),
+        gemini: GeminiClient::new(settings.gemini.api_key.clone()),
         seen: Mutex::new(HashMap::new()),
+        settings: settings.gemini,
         http_client: reqwest::Client::new(),
     })
     .await?;

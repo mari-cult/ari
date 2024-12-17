@@ -1,0 +1,7 @@
+[discord]
+token = "..."
+
+[gemini]
+api_key = "..."
+personality = "..."
+whitelisted_domains = ["discordapp.com", "discordapp.net"]
