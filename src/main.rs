@@ -7,6 +7,7 @@ use google_gemini::{
 use mime::Mime;
 use regex::Regex;
 use reqwest::Url;
+use serde::Serialize;
 use serenity::all::{CreateAttachment, CreateMessage, Message, Settings};
 use serenity::async_trait;
 use serenity::prelude::*;
@@ -53,31 +54,43 @@ impl Claide {
 
             messages.sort_unstable_by(|a, b| a.id.cmp(&b.id));
 
+            #[derive(Serialize)]
+            struct Un<'a> {
+                name: &'a str,
+                content: &'a str,
+            }
+
             let mut previous_messages = Vec::with_capacity(messages.len());
             for message in messages {
-                let (user, role) = if message.author.id == current_user_id {
-                    ("claide", GeminiRole::Model)
+                let content = &message.content;
+
+                let (role, content) = if message.author.id == current_user_id {
+                    (GeminiRole::Model, content.to_string())
                 } else {
-                    let user = message
+                    let name = message
                         .author
                         .global_name
                         .as_deref()
                         .unwrap_or(&message.author.name);
 
-                    (user, GeminiRole::User)
+                    let un = Un { name, content };
+
+                    let con = serde_json::to_string(&un)?;
+
+                    (GeminiRole::User, con)
                 };
 
                 let mut attachments = Vec::new();
 
-                let content = &message.content;
                 attachments.extend(
                     REGEX_URL
-                        .find_iter(content)
+                        .find_iter(&content)
                         .map(|m| m.as_str())
                         .filter_map(|s| Url::try_from(s).ok())
                         .filter(|url| self.settings.whitelisted_domains.url_matches(url))
                         .map(Attachment::Url),
                 );
+
                 attachments.extend(
                     message
                         .attachments
@@ -93,7 +106,7 @@ impl Claide {
                         .map(Attachment::Discord),
                 );
 
-                previous_messages.push((role, format!("{user}: {content}"), attachments));
+                previous_messages.push((role, content, attachments));
             }
 
             previous_messages
@@ -141,7 +154,7 @@ impl Claide {
                 .flatten()
                 .map(GeminiPart::from);
 
-            let mut parts = vec![GeminiPart::from(text)];
+            let mut parts = vec![GeminiPart::from(text.to_string())];
 
             parts.extend(iter);
 
