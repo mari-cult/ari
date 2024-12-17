@@ -1,11 +1,10 @@
-use std::{borrow::Cow, time::Duration};
+use std::borrow::Cow;
+use std::time::Duration;
 
 use crate::attachment::GeminiAttachment;
 use mime::Mime;
-use reqwest::{
-    header::{HeaderName, HeaderValue, CONTENT_LENGTH},
-    Client,
-};
+use reqwest::header::{HeaderName, HeaderValue, CONTENT_LENGTH};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 const BASE_URL: &str = "https://generativelanguage.googleapis.com";
