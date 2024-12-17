@@ -1,11 +1,9 @@
+use mime::Mime;
+use reqwest::Client;
+use reqwest::header::{CONTENT_LENGTH, HeaderName, HeaderValue};
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::time::Duration;
-
-use crate::attachment::GeminiAttachment;
-use mime::Mime;
-use reqwest::header::{HeaderName, HeaderValue, CONTENT_LENGTH};
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
 
 const BASE_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -99,15 +97,6 @@ pub enum GeminiPart {
         mime_type: Cow<'static, str>,
         file_uri: String,
     },
-}
-
-impl From<GeminiAttachment> for GeminiPart {
-    fn from(value: GeminiAttachment) -> Self {
-        Self::FileData {
-            mime_type: value.content_type,
-            file_uri: value.uri,
-        }
-    }
 }
 
 impl From<String> for GeminiPart {

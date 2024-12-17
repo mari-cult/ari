@@ -1,6 +1,6 @@
-use crate::gemini::GeminiClient;
 use crate::Claide;
 use anyhow::Context;
+use google_gemini::{GeminiClient, GeminiPart};
 use mime::Mime;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Url;
@@ -154,6 +154,15 @@ impl GeminiUpload for Attachment {
         match self {
             Attachment::Discord(discord) => discord.fetch_content(claide).await,
             Attachment::Url(url) => url.fetch_content(claide).await,
+        }
+    }
+}
+
+impl From<GeminiAttachment> for GeminiPart {
+    fn from(value: GeminiAttachment) -> Self {
+        Self::FileData {
+            mime_type: value.content_type,
+            file_uri: value.uri,
         }
     }
 }
