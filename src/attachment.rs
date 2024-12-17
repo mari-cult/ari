@@ -1,7 +1,9 @@
-use crate::{gemini::GeminiClient, Claide};
+use crate::gemini::GeminiClient;
+use crate::Claide;
 use anyhow::Context;
 use mime::Mime;
-use reqwest::{header::CONTENT_TYPE, Url};
+use reqwest::header::CONTENT_TYPE;
+use reqwest::Url;
 use std::borrow::Cow;
 
 const DEFAULT_MIME: &str = "text/plain";
