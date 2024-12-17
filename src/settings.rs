@@ -3,7 +3,7 @@ use figment::providers::{Format, Toml};
 use figment::Figment;
 use reqwest::Url;
 use serde::de::Error;
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{de, Deserialize, Deserializer};
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::fs;
@@ -94,7 +94,7 @@ where
 {
     let path = PathBuf::deserialize(deserializer)?;
 
-    fs::read_to_string(path).map_err(|error| Error::custom(error))
+    fs::read_to_string(path).map_err(Error::custom)
 }
 
 pub fn try_load() -> figment::Result<Settings> {
