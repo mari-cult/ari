@@ -115,7 +115,7 @@ impl Claide {
         let mut request = GeminiRequest::default();
 
         request.system_instruction.parts.push(GeminiSystemPart {
-            text: include_str!("personality.txt").into(),
+            text: self.settings.personality.clone(),
         });
 
         let settings = [
