@@ -46,6 +46,7 @@ struct Un<'a> {
     name: &'a str,
     content: &'a str,
     message_id: u64,
+    user_id: u64,
 }
 
 struct Claide {
@@ -98,24 +99,25 @@ impl Claide {
                     _ => message.content.clone(),
                 };
 
-                let (role, content) = if message.author.id == current_user_id {
-                    (GeminiRole::Model, content.to_string())
+                let name = message
+                    .author
+                    .global_name
+                    .as_deref()
+                    .unwrap_or(&message.author.name);
+
+                let un = Un {
+                    name,
+                    content: &content,
+                    message_id: message.id.get(),
+                    user_id: message.author.id.get(),
+                };
+
+                let content = serde_json::to_string(&un)?;
+
+                let role = if message.author.id == current_user_id {
+                    GeminiRole::Model
                 } else {
-                    let name = message
-                        .author
-                        .global_name
-                        .as_deref()
-                        .unwrap_or(&message.author.name);
-
-                    let un = Un {
-                        name,
-                        content: &content,
-                        message_id: message.id.get(),
-                    };
-
-                    let con = serde_json::to_string(&un)?;
-
-                    (GeminiRole::User, con)
+                    GeminiRole::User
                 };
 
                 let iter = message
@@ -139,13 +141,6 @@ impl Claide {
         let mut request = GeminiRequest::default();
 
         let skeema = schemars::schema_for!(Vec<Action>);
-
-        {
-            let debux = serde_json::to_string_pretty(&skeema).unwrap();
-
-            tracing::error!("{debux}");
-        }
-
         let skeema = serde_json::to_string(&skeema).unwrap();
 
         request.system_instruction.parts.push(GeminiSystemPart {
