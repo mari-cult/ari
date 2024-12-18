@@ -8,6 +8,7 @@ use google_gemini::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Message, RoleId, Settings};
 use serenity::async_trait;
 use serenity::prelude::*;
@@ -38,8 +39,15 @@ pub enum Action {
     DeleteMessages {
         #[serde(default)]
         message_ids: Vec<model::MessageId>,
+        #[serde(default)]
+        reason: String,
     },
 }
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde_as]
+#[serde(transparent)]
+pub struct GenResponse(#[serde_as(as = "OneOrMany<_, PreferMany>")] pub Vec<Action>);
 
 #[derive(Serialize)]
 struct Un<'a> {
@@ -217,12 +225,12 @@ impl Claide {
             }
         };
 
-        let actions: Vec<Action> = match serde_json::from_str(&content) {
+        let actions: GenResponse = match serde_json::from_str(&content) {
             Ok(content) => content,
             Err(error) => anyhow::bail!("invalid response: {error}"),
         };
 
-        for action in actions {
+        for action in actions.0 {
             match action {
                 Action::SendMessage {
                     referenced_message,
@@ -244,7 +252,9 @@ impl Claide {
                         }
                     }
 
-                    message.channel_id.send_message(&context, builder).await?;
+                    if let Err(error) = message.channel_id.send_message(&context, builder).await {
+                        tracing::error!("failed to send message: {error}");
+                    }
                 }
                 Action::PinMessage { message_id } => {
                     let mut target_message = None;
@@ -256,16 +266,25 @@ impl Claide {
                     }
 
                     if let Some(message) = target_message {
-                        message.pin(&context).await?;
+                        if let Err(error) = message.pin(&context).await {
+                            tracing::error!("failed to send message: {error}");
+                        }
                     }
                 }
-                Action::DeleteMessages { message_ids } => {
-                    delete_messages(
+                Action::DeleteMessages {
+                    message_ids,
+                    reason,
+                } => {
+                    if let Err(error) = delete_messages(
                         message.channel_id,
                         &context,
                         message_ids.into_iter().map(Into::into),
+                        &reason,
                     )
-                    .await?;
+                    .await
+                    {
+                        tracing::error!("failed to send message: {error}");
+                    }
                 }
             }
         }
@@ -278,6 +297,7 @@ async fn delete_messages(
     channel_id: ChannelId,
     context: &Context,
     message_ids: impl IntoIterator<Item = serenity::model::id::MessageId>,
+    reason: &str,
 ) -> anyhow::Result<()> {
     let mut target_message_ids = Vec::new();
 
@@ -292,8 +312,20 @@ async fn delete_messages(
     for message_ids in target_message_ids.chunks(100) {
         match message_ids {
             [] => continue,
-            [message_id] => channel_id.delete_message(context, message_id).await?,
-            message_ids => channel_id.delete_messages(context, message_ids).await?,
+            [message_id] => {
+                context
+                    .http
+                    .delete_message(channel_id, *message_id, Some(reason))
+                    .await?;
+            }
+            message_ids => {
+                let map = serde_json::json!({ "messages": message_ids });
+
+                context
+                    .http
+                    .delete_messages(channel_id, &map, Some(reason))
+                    .await?;
+            }
         }
     }
 
