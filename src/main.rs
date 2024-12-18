@@ -19,6 +19,7 @@ use std::time::Duration;
 
 mod attachment;
 mod settings;
+mod util;
 
 static REGEX_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bhttps://\S+").unwrap());
 
@@ -80,31 +81,24 @@ impl Claide {
                     (GeminiRole::User, con)
                 };
 
-                let mut attachments = Vec::new();
+                let iter_from_content = util::iter_urls(&message.content)
+                    .filter(|url| self.settings.whitelisted_domains.url_matches(url))
+                    .map(Attachment::Url);
 
-                attachments.extend(
-                    REGEX_URL
-                        .find_iter(&content)
-                        .map(|m| m.as_str())
-                        .filter_map(|s| Url::try_from(s).ok())
-                        .filter(|url| self.settings.whitelisted_domains.url_matches(url))
-                        .map(Attachment::Url),
-                );
+                let iter_from_attachments = message
+                    .attachments
+                    .iter()
+                    .filter(|attachment| {
+                        attachment
+                            .content_type
+                            .as_deref()
+                            .and_then(|content_type| content_type.parse::<Mime>().ok())
+                            .is_some_and(|mime| google_gemini::is_supported_mime(&mime))
+                    })
+                    .cloned()
+                    .map(Attachment::Discord);
 
-                attachments.extend(
-                    message
-                        .attachments
-                        .iter()
-                        .filter(|attachment| {
-                            attachment
-                                .content_type
-                                .as_deref()
-                                .and_then(|content_type| content_type.parse::<Mime>().ok())
-                                .is_some_and(|mime| google_gemini::is_supported_mime(&mime))
-                        })
-                        .cloned()
-                        .map(Attachment::Discord),
-                );
+                let attachments: Vec<_> = iter_from_content.chain(iter_from_attachments).collect();
 
                 previous_messages.push((role, content, attachments));
             }
