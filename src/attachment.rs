@@ -37,7 +37,7 @@ pub struct AttachmentContent<'a> {
 impl Default for AttachmentContent<'_> {
     fn default() -> Self {
         Self {
-            content_type: DEFAULT_FILE_NAME.into(),
+            content_type: DEFAULT_MIME.into(),
             file_name: None,
             bytes: "[empty]".into(),
         }
@@ -52,7 +52,7 @@ impl<'a> AttachmentContent<'a> {
     ) -> anyhow::Result<Self> {
         Ok(Self {
             content_type: sanitize_content_type(
-                content_type.unwrap_or_else(|| DEFAULT_MIME.into()),
+                content_type.unwrap_or_else(DEFAULT_MIME::into),
             )?,
             file_name,
             bytes,
