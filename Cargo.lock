@@ -227,7 +227,6 @@ dependencies = [
  "google-gemini",
  "linkify",
  "mime",
- "regex",
  "reqwest 0.12.9",
  "serde",
  "serde_json",
