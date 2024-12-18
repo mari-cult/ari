@@ -29,6 +29,13 @@ pub struct GeminiRequest {
     pub contents: Vec<GeminiMessage>,
     #[serde(rename = "safetySettings")]
     pub safety_settings: Vec<GeminiSafetySetting>,
+    pub generation_config: Option<GeminiGenerationConfig>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct GeminiGenerationConfig {
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub response_mime_type: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

@@ -6,12 +6,14 @@ use google_gemini::{
     GeminiClient, GeminiMessage, GeminiPart, GeminiRequest, GeminiRole, GeminiSafetySetting,
     GeminiSafetyThreshold, GeminiSystemPart,
 };
-use serde::Serialize;
-use serenity::all::{CreateAttachment, CreateMessage, Message, RoleId, Settings};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serenity::all::{CreateAttachment, CreateMessage, Message, MessageId, RoleId, Settings};
 use serenity::async_trait;
 use serenity::prelude::*;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::num::NonZero;
 
 extern crate alloc;
 
@@ -20,6 +22,21 @@ mod settings;
 mod util;
 
 const CLEO_ID: RoleId = RoleId::new(1317078903348793435);
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub enum GenAttachment {
+    Text { file_name: String, content: String },
+    //FromUrl { url: String },
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub enum Action {
+    SendMessage {
+        referenced_message: Option<u64>,
+        content: String,
+        attachments: Vec<GenAttachment>,
+    },
+}
 
 struct Claide {
     gemini: GeminiClient,
@@ -66,6 +83,7 @@ impl Claide {
             struct Un<'a> {
                 name: &'a str,
                 content: &'a str,
+                message_id: u64,
             }
 
             let mut previous_messages = Vec::with_capacity(messages.len());
@@ -81,7 +99,11 @@ impl Claide {
                         .as_deref()
                         .unwrap_or(&message.author.name);
 
-                    let un = Un { name, content };
+                    let un = Un {
+                        name,
+                        content,
+                        message_id: message.id.get(),
+                    };
 
                     let con = serde_json::to_string(&un)?;
 
@@ -108,9 +130,28 @@ impl Claide {
 
         let mut request = GeminiRequest::default();
 
+        let skeema = schemars::schema_for!(Vec<Action>);
+
+        {
+            let debux = serde_json::to_string_pretty(&skeema).unwrap();
+
+            tracing::error!("{debux}");
+        }
+
+        let skeema = serde_json::to_string(&skeema).unwrap();
+
         request.system_instruction.parts.push(GeminiSystemPart {
-            text: self.settings.personality.clone(),
+            text: format!(
+                "{}\nrespond following this json schema: {skeema}",
+                self.settings.personality.clone(),
+            ),
         });
+
+        request
+            .generation_config
+            .get_or_insert_default()
+            .response_mime_type
+            .push_str("application/json");
 
         let settings = [
             GeminiSafetySetting::HarmCategoryHarassment,
@@ -173,21 +214,41 @@ impl Claide {
             }
         };
 
-        let content = content.trim();
+        let actions: Vec<Action> = match serde_json::from_str(&content) {
+            Ok(content) => content,
+            Err(error) => anyhow::bail!("invalid response: {error}"),
+        };
 
-        if content.is_empty() {
-            anyhow::bail!("response is empty");
+        for action in actions {
+            match action {
+                Action::SendMessage {
+                    referenced_message,
+                    content,
+                    attachments,
+                } => {
+                    let mut builder = CreateMessage::new();
+
+                    if content.chars().count() > 1950 {
+                        builder = builder.add_file(CreateAttachment::bytes(content, "message.txt"));
+                    } else {
+                        builder = builder.content(content);
+                    }
+
+                    if let Some(message_id) = referenced_message
+                        .and_then(NonZero::new)
+                        .map(MessageId::from)
+                    {
+                        if let Some(messages) = context.cache.channel_messages(message.channel_id) {
+                            if let Some(message) = messages.get(&message_id) {
+                                builder = builder.reference_message(message);
+                            }
+                        }
+                    }
+
+                    message.channel_id.send_message(&context, builder).await?;
+                }
+            }
         }
-
-        let mut builder = CreateMessage::new();
-
-        if content.chars().count() > 1950 {
-            builder = builder.add_file(CreateAttachment::bytes(content, "message.txt"));
-        } else {
-            builder = builder.content(content);
-        }
-
-        message.channel_id.send_message(&context, builder).await?;
 
         Ok(())
     }
