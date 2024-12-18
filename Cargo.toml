@@ -12,6 +12,7 @@ google-gemini.workspace = true
 linkify.workspace = true
 mime.workspace = true
 reqwest.workspace = true
+schemars = "0.8.21"
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = [
