@@ -1,10 +1,10 @@
 use crate::Claide;
+use alloc::borrow::Cow;
 use anyhow::Context;
 use google_gemini::{GeminiClient, GeminiPart};
 use mime::Mime;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Url;
-use std::borrow::Cow;
 
 const DEFAULT_MIME: &str = "text/plain";
 const DEFAULT_FILE_NAME: &str = "file.txt";
@@ -100,18 +100,6 @@ pub trait GeminiUpload {
     }
 }
 
-impl GeminiUpload for serenity::all::Attachment {
-    async fn fetch_content(&self, _claide: &Claide) -> anyhow::Result<AttachmentContent> {
-        let file_name = &self.filename;
-        let content_type = self.content_type.as_deref().map(Cow::Borrowed);
-
-        tracing::info!("downloading from discord: {}: {}", file_name, self.id);
-        let bytes = self.download().await?;
-
-        AttachmentContent::new(content_type, Some(file_name), bytes)
-    }
-}
-
 impl GeminiUpload for Url {
     async fn fetch_content(&self, claide: &Claide) -> anyhow::Result<AttachmentContent> {
         let file_name = self.path_segments().and_then(|path| path.last());
@@ -135,26 +123,17 @@ impl GeminiUpload for Url {
     }
 }
 
-pub enum Attachment {
-    Discord(serenity::all::Attachment),
-    Url(Url),
-}
+pub struct Attachment(pub Url);
 
 impl Attachment {
     pub fn url(&self) -> &str {
-        match self {
-            Self::Discord(attachment) => &attachment.url,
-            Self::Url(url) => url.as_str(),
-        }
+        self.0.as_str()
     }
 }
 
 impl GeminiUpload for Attachment {
     async fn fetch_content(&self, claide: &Claide) -> anyhow::Result<AttachmentContent> {
-        match self {
-            Attachment::Discord(discord) => discord.fetch_content(claide).await,
-            Attachment::Url(url) => url.fetch_content(claide).await,
-        }
+        self.0.fetch_content(claide).await
     }
 }
 

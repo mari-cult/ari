@@ -1,9 +1,11 @@
+use alloc::borrow::Cow;
+use core::time::Duration;
 use mime::Mime;
+use reqwest::header::{HeaderName, HeaderValue, CONTENT_LENGTH};
 use reqwest::Client;
-use reqwest::header::{CONTENT_LENGTH, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
-use std::time::Duration;
+
+extern crate alloc;
 
 const BASE_URL: &str = "https://generativelanguage.googleapis.com";
 

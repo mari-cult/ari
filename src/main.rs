@@ -1,5 +1,6 @@
 use self::attachment::{Attachment, GeminiAttachment, GeminiUpload};
 use self::settings::GeminiSettings;
+use core::time::Duration;
 use futures_util::StreamExt;
 use google_gemini::{
     GeminiClient, GeminiMessage, GeminiPart, GeminiRequest, GeminiRole, GeminiSafetySetting,
@@ -11,7 +12,8 @@ use serenity::async_trait;
 use serenity::prelude::*;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::time::Duration;
+
+extern crate alloc;
 
 mod attachment;
 mod settings;
@@ -94,7 +96,7 @@ impl Claide {
                 let iter = util::iter_urls(&message.content)
                     .chain(iter)
                     .filter(|url| self.settings.whitelisted_domains.url_matches(url))
-                    .map(Attachment::Url);
+                    .map(Attachment);
 
                 let attachments: Vec<_> = iter.collect();
 

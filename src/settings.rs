@@ -1,11 +1,11 @@
 use aho_corasick::{AhoCorasick, BuildError};
+use alloc::borrow::Cow;
+use core::fmt::Display;
 use figment::providers::{Format, Toml};
 use figment::Figment;
 use reqwest::Url;
 use serde::de::Error;
 use serde::{de, Deserialize, Deserializer};
-use std::borrow::Cow;
-use std::fmt::Display;
 use std::fs;
 use std::path::PathBuf;
 
