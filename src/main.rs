@@ -169,7 +169,6 @@ impl Claide {
         };
 
         let content = content.trim();
-        let content = content.strip_prefix("claide:").unwrap_or(content).trim();
 
         if content.is_empty() {
             anyhow::bail!("response is empty");
