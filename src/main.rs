@@ -8,34 +8,39 @@ use google_gemini::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serenity::all::{CreateAttachment, CreateMessage, Message, MessageId, RoleId, Settings};
+use serenity::all::{CreateAttachment, CreateMessage, Message, RoleId, Settings};
 use serenity::async_trait;
 use serenity::prelude::*;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::num::NonZero;
 
 extern crate alloc;
 
 mod attachment;
+mod model;
 mod settings;
 mod util;
 
 const CLEO_ID: RoleId = RoleId::new(1317078903348793435);
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
-pub enum GenAttachment {
-    Text { file_name: String, content: String },
-    //FromUrl { url: String },
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub enum Action {
     SendMessage {
-        referenced_message: Option<u64>,
+        #[serde(default)]
+        referenced_message: Option<model::MessageId>,
         content: String,
-        attachments: Vec<GenAttachment>,
     },
+    // pin stuff u rly rly like or should remember
+    PinMessage {
+        message_id: model::MessageId,
+    },
+}
+
+#[derive(Serialize)]
+struct Un<'a> {
+    name: &'a str,
+    content: &'a str,
+    message_id: u64,
 }
 
 struct Claide {
@@ -79,16 +84,14 @@ impl Claide {
 
             messages.sort_unstable_by(|a, b| a.id.cmp(&b.id));
 
-            #[derive(Serialize)]
-            struct Un<'a> {
-                name: &'a str,
-                content: &'a str,
-                message_id: u64,
-            }
-
             let mut previous_messages = Vec::with_capacity(messages.len());
             for message in messages {
-                let content = &message.content;
+                let content = match message.kind {
+                    serenity::all::MessageType::PinsAdd => {
+                        format!("*pinned a message to this channel*")
+                    }
+                    _ => message.content.clone(),
+                };
 
                 let (role, content) = if message.author.id == current_user_id {
                     (GeminiRole::Model, content.to_string())
@@ -101,7 +104,7 @@ impl Claide {
 
                     let un = Un {
                         name,
-                        content,
+                        content: &content,
                         message_id: message.id.get(),
                     };
 
@@ -224,7 +227,6 @@ impl Claide {
                 Action::SendMessage {
                     referenced_message,
                     content,
-                    attachments,
                 } => {
                     let mut builder = CreateMessage::new();
 
@@ -234,18 +236,28 @@ impl Claide {
                         builder = builder.content(content);
                     }
 
-                    if let Some(message_id) = referenced_message
-                        .and_then(NonZero::new)
-                        .map(MessageId::from)
-                    {
+                    if let Some(message_id) = referenced_message {
                         if let Some(messages) = context.cache.channel_messages(message.channel_id) {
-                            if let Some(message) = messages.get(&message_id) {
+                            if let Some(message) = messages.get(&message_id.into()) {
                                 builder = builder.reference_message(message);
                             }
                         }
                     }
 
                     message.channel_id.send_message(&context, builder).await?;
+                }
+                Action::PinMessage { message_id } => {
+                    let mut target_message = None;
+
+                    if let Some(messages) = context.cache.channel_messages(message.channel_id) {
+                        if let Some(message) = messages.get(&message_id.into()) {
+                            target_message = Some(message.clone());
+                        }
+                    }
+
+                    if let Some(message) = target_message {
+                        message.pin(&context).await?;
+                    }
                 }
             }
         }
