@@ -9,9 +9,8 @@ anyhow.workspace = true
 figment.workspace = true
 futures-util.workspace = true
 google-gemini.workspace = true
-linkify = "0.10.0"
+linkify.workspace = true
 mime.workspace = true
-regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -24,7 +23,7 @@ tokio = { workspace = true, features = [
 ] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
-url = "2.5.4"
+url.workspace = true
 
 [lints]
 workspace = true
@@ -53,6 +52,7 @@ anyhow = "1"
 figment = { version = "0.10", features = ["toml"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 google-gemini = { version = "0.0.0", path = "crates/google-gemini" }
+linkify = "0.10"
 mime = "0.3"
 regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = [
@@ -67,6 +67,7 @@ serde_json = "1"
 tokio = "1.42"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2.5"
 
 [workspace.lints.clippy]
 alloc_instead_of_core = "deny"

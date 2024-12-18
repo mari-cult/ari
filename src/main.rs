@@ -1,27 +1,22 @@
 use self::attachment::{Attachment, GeminiAttachment, GeminiUpload};
+use self::settings::GeminiSettings;
 use futures_util::StreamExt;
 use google_gemini::{
     GeminiClient, GeminiMessage, GeminiPart, GeminiRequest, GeminiRole, GeminiSafetySetting,
     GeminiSafetyThreshold, GeminiSystemPart,
 };
 use mime::Mime;
-use regex::Regex;
-use reqwest::Url;
 use serde::Serialize;
 use serenity::all::{CreateAttachment, CreateMessage, Message, Settings};
 use serenity::async_trait;
 use serenity::prelude::*;
-use settings::GeminiSettings;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::sync::LazyLock;
 use std::time::Duration;
 
 mod attachment;
 mod settings;
 mod util;
-
-static REGEX_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bhttps://\S+").unwrap());
 
 struct Claide {
     gemini: GeminiClient,
