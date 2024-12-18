@@ -5,7 +5,6 @@ use google_gemini::{
     GeminiClient, GeminiMessage, GeminiPart, GeminiRequest, GeminiRole, GeminiSafetySetting,
     GeminiSafetyThreshold, GeminiSystemPart,
 };
-use mime::Mime;
 use serde::Serialize;
 use serenity::all::{CreateAttachment, CreateMessage, Message, Settings};
 use serenity::async_trait;
@@ -76,24 +75,17 @@ impl Claide {
                     (GeminiRole::User, con)
                 };
 
-                let iter_from_content = util::iter_urls(&message.content)
+                let iter = message
+                    .attachments
+                    .iter()
+                    .flat_map(|attachment| attachment.proxy_url.parse().ok());
+
+                let iter = util::iter_urls(&message.content)
+                    .chain(iter)
                     .filter(|url| self.settings.whitelisted_domains.url_matches(url))
                     .map(Attachment::Url);
 
-                let iter_from_attachments = message
-                    .attachments
-                    .iter()
-                    .filter(|attachment| {
-                        attachment
-                            .content_type
-                            .as_deref()
-                            .and_then(|content_type| content_type.parse::<Mime>().ok())
-                            .is_some_and(|mime| google_gemini::is_supported_mime(&mime))
-                    })
-                    .cloned()
-                    .map(Attachment::Discord);
-
-                let attachments: Vec<_> = iter_from_content.chain(iter_from_attachments).collect();
+                let attachments: Vec<_> = iter.collect();
 
                 previous_messages.push((role, content, attachments));
             }
