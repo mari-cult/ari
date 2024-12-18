@@ -52,7 +52,7 @@ impl<'a> AttachmentContent<'a> {
     ) -> anyhow::Result<Self> {
         Ok(Self {
             content_type: sanitize_content_type(
-                content_type.unwrap_or_else(DEFAULT_MIME::into),
+                content_type.unwrap_or(Cow::Borrowed(DEFAULT_MIME)),
             )?,
             file_name,
             bytes,
