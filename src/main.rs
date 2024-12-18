@@ -6,7 +6,7 @@ use google_gemini::{
     GeminiSafetyThreshold, GeminiSystemPart,
 };
 use serde::Serialize;
-use serenity::all::{CreateAttachment, CreateMessage, Message, Settings};
+use serenity::all::{CreateAttachment, CreateMessage, Message, RoleId, Settings};
 use serenity::async_trait;
 use serenity::prelude::*;
 use std::collections::hash_map::Entry;
@@ -16,6 +16,8 @@ use std::time::Duration;
 mod attachment;
 mod settings;
 mod util;
+
+const CLEO_ID: RoleId = RoleId::new(1317078903348793435);
 
 struct Claide {
     gemini: GeminiClient,
@@ -34,7 +36,16 @@ impl Claide {
             return Ok(());
         }
 
-        if !message.mentions_me(&context).await? {
+        let is_mentioned = message
+            .mentions
+            .iter()
+            .any(|user| user.id == current_user_id)
+            || message.content.to_lowercase().contains("cleo")
+            || message.mention_roles.contains(&CLEO_ID)
+            || message.mention_everyone
+            || !message.attachments.is_empty();
+
+        if !is_mentioned {
             tracing::debug!("ignored non-mention");
 
             return Ok(());
