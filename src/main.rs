@@ -8,7 +8,7 @@ use google_gemini::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serenity::all::{CreateAttachment, CreateMessage, Message, RoleId, Settings};
+use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Message, RoleId, Settings};
 use serenity::async_trait;
 use serenity::prelude::*;
 use std::collections::hash_map::Entry;
@@ -33,6 +33,11 @@ pub enum Action {
     // pin stuff u rly rly like or should remember
     PinMessage {
         message_id: model::MessageId,
+    },
+    // only delete if you think its a good idea or mari is testing
+    DeleteMessages {
+        #[serde(default)]
+        message_ids: Vec<model::MessageId>,
     },
 }
 
@@ -259,11 +264,45 @@ impl Claide {
                         message.pin(&context).await?;
                     }
                 }
+                Action::DeleteMessages { message_ids } => {
+                    delete_messages(
+                        message.channel_id,
+                        &context,
+                        message_ids.into_iter().map(Into::into),
+                    )
+                    .await?;
+                }
             }
         }
 
         Ok(())
     }
+}
+
+async fn delete_messages(
+    channel_id: ChannelId,
+    context: &Context,
+    message_ids: impl IntoIterator<Item = serenity::model::id::MessageId>,
+) -> anyhow::Result<()> {
+    let mut target_message_ids = Vec::new();
+
+    if let Some(messages) = context.cache.channel_messages(channel_id) {
+        for message_id in message_ids {
+            if messages.contains_key(&message_id) {
+                target_message_ids.push(message_id);
+            }
+        }
+    }
+
+    for message_ids in target_message_ids.chunks(100) {
+        match message_ids {
+            [] => continue,
+            [message_id] => channel_id.delete_message(context, message_id).await?,
+            message_ids => channel_id.delete_messages(context, message_ids).await?,
+        }
+    }
+
+    Ok(())
 }
 
 #[async_trait]
