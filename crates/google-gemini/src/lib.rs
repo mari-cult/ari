@@ -25,10 +25,13 @@ const ZERO: HeaderValue = HeaderValue::from_static("0");
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct GeminiRequest {
-    pub system_instruction: GeminiSystemInstruction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Option<GeminiSystemInstruction>,
     pub contents: Vec<GeminiMessage>,
     #[serde(rename = "safetySettings")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub safety_settings: Vec<GeminiSafetySetting>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<GeminiGenerationConfig>,
 }
 

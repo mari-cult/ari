@@ -12,12 +12,15 @@ google-gemini.workspace = true
 linkify.workspace = true
 mime.workspace = true
 reqwest.workspace = true
+rustix = { version = "0.38.42", features = ["process"] }
 schemars = "0.8.21"
 serde.workspace = true
 serde_json.workspace = true
 serde_with = "3.11.0"
 tokio = { workspace = true, features = [
+    "fs",
     "macros",
+    "process",
     "rt-multi-thread",
     "signal",
     "sync",
@@ -29,20 +32,6 @@ url.workspace = true
 
 [lints]
 workspace = true
-
-[dependencies.serenity]
-version = "0.12"
-default-features = false
-features = [
-    "builder",
-    "cache",
-    "client",
-    "gateway",
-    "model",
-    "native_tls_backend",
-    "unstable_discord_api",
-    "utils",
-]
 
 [workspace]
 members = ["crates/*"]
@@ -56,7 +45,6 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 google-gemini = { version = "0.0.0", path = "crates/google-gemini" }
 linkify = "0.10"
 mime = "0.3"
-regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = [
     "brotli",
     "gzip",
