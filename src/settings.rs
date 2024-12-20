@@ -23,7 +23,9 @@ impl DomainMatcher {
         P: AsRef<[u8]> + Display,
     {
         Ok(Self {
-            backend: AhoCorasick::new(patterns.into_iter().map(|pattern| format!(".{pattern}")))?,
+            backend: AhoCorasick::builder()
+                .ascii_case_insensitive(true)
+                .build(patterns.into_iter().map(|pattern| format!(".{pattern}")))?,
         })
     }
 
@@ -154,5 +156,21 @@ mod tests {
 
         assert!(whitelist.url_matches(&"https://google.com/test".parse().expect("url parsing")));
         assert!(!whitelist.url_matches(&"foo:bar".parse().expect("url parsing")));
+    }
+
+    #[test]
+    fn domain_matcher_case_insensitive() {
+        let whitelist = DomainMatcher::new(vec!["COm"]).unwrap();
+
+        assert!(whitelist.domain_matches("discord.COm"));
+        assert!(whitelist.domain_matches("cdn.whatever.DISCORD.coM"));
+    }
+
+    #[test]
+    #[should_panic]
+    fn domain_matcher_case_insensitive_unicode() {
+        let whitelist = DomainMatcher::new(vec![".рф"]).unwrap();
+
+        assert!(whitelist.domain_matches("президент.РФ"));
     }
 }

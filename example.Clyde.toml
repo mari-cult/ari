@@ -1,10 +1,16 @@
 [discord]
 token = "..."
+
 # their messages will be completely ignored
 blacklisted_users = []
 
 [gemini]
 api_key = "..."
+
 # path to personality text file
 personality = "..."
+
+# Domain list to download files from
+#
+# Case insensitivity only works for ascii characters
 whitelisted_domains = ["discordapp.com", "discordapp.net"]
