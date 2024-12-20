@@ -13,6 +13,7 @@ use serenity::async_trait;
 use serenity::prelude::*;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 extern crate alloc;
 
@@ -23,7 +24,14 @@ mod util;
 
 const CLEO_ID: RoleId = RoleId::new(1317078903348793435);
 
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
+static SCHEMA: LazyLock<String> = LazyLock::new(|| {
+    let schema = schemars::schema_for!(Vec<Action>);
+    let serialized = serde_json::to_string(&schema).unwrap();
+
+    format!("respond following this json schema: {serialized}")
+});
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub enum Action {
     SendMessage {
         #[serde(default)]
@@ -43,7 +51,7 @@ pub enum Action {
     },
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde_as]
 #[serde(transparent)]
 pub struct GenResponse(#[serde_as(as = "OneOrMany<_, PreferMany>")] pub Vec<Action>);
@@ -120,9 +128,7 @@ impl Claide {
             let mut previous_messages = Vec::with_capacity(messages.len());
             for message in messages {
                 let content = match message.kind {
-                    serenity::all::MessageType::PinsAdd => {
-                        "*pinned a message to this channel*"
-                    }
+                    serenity::all::MessageType::PinsAdd => "*pinned a message to this channel*",
                     _ => &message.content,
                 };
 
@@ -152,12 +158,11 @@ impl Claide {
                     .iter()
                     .flat_map(|attachment| attachment.proxy_url.parse().ok());
 
-                let iter = util::iter_urls(&message.content)
+                let attachments: Vec<_> = util::iter_urls(&message.content)
                     .chain(iter)
                     .filter(|url| self.settings.gemini.whitelisted_domains.url_matches(url))
-                    .map(Attachment);
-
-                let attachments: Vec<_> = iter.collect();
+                    .map(Attachment)
+                    .collect();
 
                 previous_messages.push((role, content, attachments));
             }
@@ -167,14 +172,8 @@ impl Claide {
 
         let mut request = GeminiRequest::default();
 
-        let skeema = schemars::schema_for!(Vec<Action>);
-        let skeema = serde_json::to_string(&skeema).unwrap();
-
         request.system_instruction.parts.push(GeminiSystemPart {
-            text: format!(
-                "{}\nrespond following this json schema: {skeema}",
-                self.settings.gemini.personality.clone(),
-            ),
+            text: format!("{}\n{}", self.settings.gemini.personality, *SCHEMA),
         });
 
         request
@@ -197,18 +196,16 @@ impl Claide {
 
         for (role, text, attachments) in previous_messages {
             let attachment = attachments.into_iter().map(|attachment| async move {
-                anyhow::Ok(
-                    match self.seen.lock().await.entry(attachment.url().to_string()) {
-                        Entry::Occupied(occupied) => occupied.get().clone(),
-                        Entry::Vacant(vacant) => {
-                            let pair = attachment.upload_into_gemini(self).await?;
+                anyhow::Ok(match self.seen.lock().await.entry(attachment.url().to_string()) {
+                    Entry::Occupied(occupied) => occupied.get().clone(),
+                    Entry::Vacant(vacant) => {
+                        let pair = attachment.upload_into_gemini(self).await?;
 
-                            vacant.insert(pair.clone());
+                        vacant.insert(pair.clone());
 
-                            pair
-                        }
-                    },
-                )
+                        pair
+                    }
+                })
             });
 
             let iter = futures_util::stream::iter(attachment)
@@ -236,7 +233,7 @@ impl Claide {
             Ok(content) => content,
             Err(error) => {
                 let mut builder = CreateMessage::new();
-                builder = builder.content(format!("```\n{error}```\n-# repor issue to mari",));
+                builder = builder.content(format!("```\n{error}```\n-# repor issue to mari"));
 
                 message.channel_id.send_message(&context, builder).await?;
 
