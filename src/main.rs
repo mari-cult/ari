@@ -1,5 +1,4 @@
 use self::attachment::{Attachment, GeminiAttachment, GeminiUpload};
-use self::settings::GeminiSettings;
 use core::time::Duration;
 use futures_util::StreamExt;
 use google_gemini::{
@@ -60,12 +59,23 @@ struct Un<'a> {
 struct Claide {
     gemini: GeminiClient,
     seen: tokio::sync::Mutex<HashMap<String, GeminiAttachment>>,
-    settings: GeminiSettings,
+    settings: settings::Settings,
     http_client: reqwest::Client,
 }
 
 impl Claide {
     async fn process_message(&self, context: Context, message: Message) -> anyhow::Result<()> {
+        if self
+            .settings
+            .discord
+            .blacklisted_users
+            .contains(&message.author.id.get())
+        {
+            tracing::debug!("ignored message by blacklisted user {}", &message.author.id);
+
+            return Ok(());
+        }
+
         let current_user_id = context.cache.current_user().id;
 
         if message.author.id == current_user_id {
@@ -94,7 +104,16 @@ impl Claide {
                 anyhow::bail!("no channel messages");
             };
 
-            let mut messages = cached_messages.values().collect::<Vec<_>>();
+            let mut messages = cached_messages
+                .values()
+                .filter(|msg| {
+                    !self
+                        .settings
+                        .discord
+                        .blacklisted_users
+                        .contains(&msg.author.id.get())
+                })
+                .collect::<Vec<_>>();
 
             messages.sort_unstable_by(|a, b| a.id.cmp(&b.id));
 
@@ -135,7 +154,7 @@ impl Claide {
 
                 let iter = util::iter_urls(&message.content)
                     .chain(iter)
-                    .filter(|url| self.settings.whitelisted_domains.url_matches(url))
+                    .filter(|url| self.settings.gemini.whitelisted_domains.url_matches(url))
                     .map(Attachment);
 
                 let attachments: Vec<_> = iter.collect();
@@ -154,7 +173,7 @@ impl Claide {
         request.system_instruction.parts.push(GeminiSystemPart {
             text: format!(
                 "{}\nrespond following this json schema: {skeema}",
-                self.settings.personality.clone(),
+                self.settings.gemini.personality.clone(),
             ),
         });
 
@@ -353,14 +372,14 @@ async fn main() -> anyhow::Result<()> {
     cache_settings.time_to_live = Duration::from_secs(24 * 60 * 60);
 
     let mut client = Client::builder(
-        settings.discord.token,
+        settings.discord.token.clone(),
         GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILD_MESSAGES,
     )
     .cache_settings(cache_settings)
     .event_handler(Claide {
         gemini: GeminiClient::new(settings.gemini.api_key.clone()),
         seen: Mutex::new(HashMap::new()),
-        settings: settings.gemini,
+        settings,
         http_client: reqwest::Client::new(),
     })
     .await?;
