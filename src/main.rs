@@ -121,9 +121,9 @@ impl Claide {
             for message in messages {
                 let content = match message.kind {
                     serenity::all::MessageType::PinsAdd => {
-                        format!("*pinned a message to this channel*")
+                        "*pinned a message to this channel*"
                     }
-                    _ => message.content.clone(),
+                    _ => &message.content,
                 };
 
                 let name = message
@@ -134,7 +134,7 @@ impl Claide {
 
                 let un = Un {
                     name,
-                    content: &content,
+                    content,
                     message_id: message.id.get(),
                     user_id: message.author.id.get(),
                 };
