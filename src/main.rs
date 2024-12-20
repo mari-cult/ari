@@ -1,4 +1,5 @@
 use self::attachment::{Attachment, GeminiAttachment, GeminiUpload};
+use aho_corasick::AhoCorasick;
 use core::time::Duration;
 use futures_util::StreamExt;
 use google_gemini::{
@@ -69,6 +70,22 @@ struct Claide {
     seen: tokio::sync::Mutex<HashMap<String, GeminiAttachment>>,
     settings: settings::Settings,
     http_client: reqwest::Client,
+    name_matcher: AhoCorasick,
+}
+
+impl Claide {
+    fn new(settings: settings::Settings) -> Self {
+        Self {
+            gemini: GeminiClient::new(settings.gemini.api_key.clone()),
+            seen: Default::default(),
+            settings,
+            http_client: reqwest::Client::new(),
+            name_matcher: AhoCorasick::builder()
+                .ascii_case_insensitive(true)
+                .build(["cleo"])
+                .unwrap(),
+        }
+    }
 }
 
 impl Claide {
@@ -96,7 +113,7 @@ impl Claide {
             .mentions
             .iter()
             .any(|user| user.id == current_user_id)
-            || message.content.to_lowercase().contains("cleo")
+            || self.name_matcher.is_match(&message.content)
             || message.mention_roles.contains(&CLEO_ID)
             || message.mention_everyone
             || !message.attachments.is_empty();
@@ -196,16 +213,18 @@ impl Claide {
 
         for (role, text, attachments) in previous_messages {
             let attachment = attachments.into_iter().map(|attachment| async move {
-                anyhow::Ok(match self.seen.lock().await.entry(attachment.url().to_string()) {
-                    Entry::Occupied(occupied) => occupied.get().clone(),
-                    Entry::Vacant(vacant) => {
-                        let pair = attachment.upload_into_gemini(self).await?;
+                anyhow::Ok(
+                    match self.seen.lock().await.entry(attachment.url().to_string()) {
+                        Entry::Occupied(occupied) => occupied.get().clone(),
+                        Entry::Vacant(vacant) => {
+                            let pair = attachment.upload_into_gemini(self).await?;
 
-                        vacant.insert(pair.clone());
+                            vacant.insert(pair.clone());
 
-                        pair
-                    }
-                })
+                            pair
+                        }
+                    },
+                )
             });
 
             let iter = futures_util::stream::iter(attachment)
@@ -359,9 +378,9 @@ impl EventHandler for Claide {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let settings = settings::try_load()?;
-
     tracing_subscriber::fmt::init();
+
+    let settings = settings::try_load()?;
 
     let mut cache_settings = Settings::default();
 
@@ -373,12 +392,7 @@ async fn main() -> anyhow::Result<()> {
         GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILD_MESSAGES,
     )
     .cache_settings(cache_settings)
-    .event_handler(Claide {
-        gemini: GeminiClient::new(settings.gemini.api_key.clone()),
-        seen: Mutex::new(HashMap::new()),
-        settings,
-        http_client: reqwest::Client::new(),
-    })
+    .event_handler(Claide::new(settings))
     .await?;
 
     client.start().await?;
