@@ -67,7 +67,7 @@ struct Un<'a> {
 
 struct Claide {
     gemini: GeminiClient,
-    seen: tokio::sync::Mutex<HashMap<String, GeminiAttachment>>,
+    seen: Mutex<HashMap<String, GeminiAttachment>>,
     settings: settings::Settings,
     http_client: reqwest::Client,
     name_matcher: AhoCorasick,
@@ -292,18 +292,16 @@ impl Claide {
                     }
                 }
                 Action::PinMessage { message_id } => {
-                    let mut target_message = None;
+                    let Some(msg) = context
+                        .cache
+                        .channel_messages(message.channel_id)
+                        .and_then(|cache| cache.get(&message_id.into()).cloned())
+                    else {
+                        continue;
+                    };
 
-                    if let Some(messages) = context.cache.channel_messages(message.channel_id) {
-                        if let Some(message) = messages.get(&message_id.into()) {
-                            target_message = Some(message.clone());
-                        }
-                    }
-
-                    if let Some(message) = target_message {
-                        if let Err(error) = message.pin(&context).await {
-                            tracing::error!("failed to send message: {error}");
-                        }
+                    if let Err(error) = msg.pin(&context).await {
+                        tracing::error!("failed to send message: {error}");
                     }
                 }
                 Action::DeleteMessages {
