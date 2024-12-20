@@ -6,6 +6,7 @@ use figment::Figment;
 use reqwest::Url;
 use serde::de::Error;
 use serde::{de, Deserialize, Deserializer};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -72,6 +73,8 @@ impl<'de> Deserialize<'de> for DomainMatcher {
 #[derive(Clone, Debug, Deserialize)]
 pub struct DiscordSettings {
     pub token: String,
+    #[serde(default)]
+    pub blacklisted_users: HashSet<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

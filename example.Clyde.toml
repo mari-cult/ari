@@ -1,7 +1,10 @@
 [discord]
 token = "..."
+# their messages will be completely ignored
+blacklisted_users = []
 
 [gemini]
 api_key = "..."
+# path to personality text file
 personality = "..."
 whitelisted_domains = ["discordapp.com", "discordapp.net"]
