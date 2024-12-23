@@ -17,7 +17,7 @@ pub fn start(client: Arc<Client>, channel_id: Id<ChannelMarker>) -> Typing {
 
     tokio::spawn(async move {
         loop {
-            if let Ok(()) | Err(TryRecvError::Empty) = receiver.try_recv() {
+            if let Ok(()) | Err(TryRecvError::Closed) = receiver.try_recv() {
                 debug!("typing channel closed");
 
                 break;

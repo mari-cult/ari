@@ -29,8 +29,12 @@ pub struct Discord {
 }
 
 impl Discord {
-    pub async fn next(&mut self) -> Option<Message> {
-        self.stream.recv().await
+    pub async fn drain(&mut self) -> Vec<Message> {
+        let mut messages = Vec::new();
+
+        self.stream.recv_many(&mut messages, usize::MAX).await;
+
+        messages
     }
 }
 
