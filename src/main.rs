@@ -68,8 +68,10 @@ async fn main() -> anyhow::Result<()> {
         let mut typing = None;
 
         loop {
-            let Some(Message::Binary(bytes)) = incoming.next().await else {
-                continue;
+            let bytes = match incoming.next().await {
+                Some(Message::Binary(bytes)) => bytes,
+                Some(Message::Close(_)) | None => break,
+                _ => continue,
             };
 
             let incoming_message: gemini::model::incoming::IncomingMessage =
