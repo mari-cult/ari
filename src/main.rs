@@ -2,7 +2,7 @@ use gemini::LiveSettings;
 use std::env;
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use twilight_http::Client;
 use twilight_model::id::{marker::ChannelMarker, Id};
 
@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let mut discord = discord::start(token);
     let mut message_queue = Vec::new();
 
-    while {
+    'outermost: while {
         message_queue.extend(discord.drain().await);
 
         !message_queue.is_empty()
@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
         let mut message_queue = std::mem::take(&mut message_queue);
-        let mut discord = discord.clone();
+        let discord = discord.clone();
         let client = Arc::clone(&client);
 
         tokio::spawn(async move {
@@ -109,35 +109,26 @@ async fn main() -> anyhow::Result<()> {
             anyhow::Ok(())
         });
 
-        debug!("start inner discord message queue loop");
-
         while !message_queue.is_empty() {
-            debug!("message queue has: {} items", message_queue.len());
+            let next_message = message_queue.remove(0);
+            let json = serde_json::to_string(&next_message)?;
 
             {
-                let mut iter = message_queue.drain(..).peekable();
+                let json = serde_json::to_string_pretty(&next_message)?;
 
-                while let Some(message) = iter.next() {
-                    debug!("discord message outgoing loop");
-
-                    let json = serde_json::to_string(&message)?;
-
-                    {
-                        let json = serde_json::to_string_pretty(&message)?;
-
-                        info!("sending new discord message: {json}");
-                    }
-
-                    outgoing.send(&gemini::model::outgoing::OutgoingMessage {
-                        client_content: gemini::model::outgoing::ClientContent {
-                            turns: vec![gemini::model::Content::new(json)],
-                            turn_complete: iter.peek().is_none(),
-                        },
-                    })?;
-                }
+                info!("sending new discord message: {json}");
             }
 
-            message_queue.extend(discord.drain().await);
+            if let Err(error) = outgoing.send(&gemini::model::outgoing::OutgoingMessage {
+                client_content: gemini::model::outgoing::ClientContent {
+                    turns: vec![gemini::model::Content::new(json)],
+                    turn_complete: message_queue.is_empty(),
+                },
+            }) {
+                error!(source = ?error, "sending outgoing message(s) failed");
+                message_queue.insert(0, next_message);
+                break;
+            }
         }
     }
 
