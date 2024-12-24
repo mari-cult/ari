@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let mut discord = discord::start(token);
     let mut message_queue = Vec::new();
 
-    'outermost: while {
+    while {
         message_queue.extend(discord.drain().await);
 
         !message_queue.is_empty()
@@ -38,8 +38,6 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
 
-        let mut message_queue = std::mem::take(&mut message_queue);
-        let discord = discord.clone();
         let client = Arc::clone(&client);
 
         tokio::spawn(async move {
@@ -129,6 +127,10 @@ async fn main() -> anyhow::Result<()> {
                 message_queue.insert(0, next_message);
                 break;
             }
+
+            let new_messages = discord.drain().await;
+
+            message_queue.extend(new_messages);
         }
     }
 
