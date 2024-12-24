@@ -2,116 +2,146 @@ use gemini::LiveSettings;
 use std::env;
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use twilight_http::Client;
 use twilight_model::id::{marker::ChannelMarker, Id};
 
 mod discord;
 mod gemini;
 
+const LIVE_ID: Id<ChannelMarker> = Id::new(1320753531329974374);
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
-
-    let api_key = env::var("GOOGLE_AI_API_KEY")?;
-    let token = env::var("DISCORD_TOKEN")?;
-
     rustls::crypto::ring::default_provider()
         .install_default()
         .map_err(|_| anyhow::anyhow!("failed to install default crypto provider"))?;
 
+    let api_key = env::var("GOOGLE_AI_API_KEY")?;
+    let token = env::var("DISCORD_TOKEN")?;
     let client = Arc::new(Client::new(token.clone()));
-    let mut messages = discord::start(token);
+    let mut discord = discord::start(token);
+    let mut message_queue = Vec::new();
 
-    let (mut outgoing, mut incoming) = gemini::connect(LiveSettings {
-        api_key,
-        system: include_str!("lila.txt").trim().into(),
-        ..Default::default()
-    })
-    .await?;
+    while {
+        message_queue.extend(discord.drain().await);
 
-    tokio::spawn(async move {
-        loop {
-            let messages = messages.drain().await;
+        !message_queue.is_empty()
+    } {
+        debug!("starting new live connection");
 
-            if messages.is_empty() {
-                break;
-            }
+        let (mut outgoing, mut incoming) = gemini::connect(LiveSettings {
+            api_key: api_key.clone(),
+            system: include_str!("lila.txt").trim().into(),
+            ..Default::default()
+        })
+        .await?;
 
-            let mut iter = messages.iter().peekable();
+        let mut message_queue = std::mem::take(&mut message_queue);
+        let mut discord = discord.clone();
+        let client = Arc::clone(&client);
 
-            while let Some(message) = iter.next() {
-                let json = serde_json::to_string(&message)?;
+        tokio::spawn(async move {
+            'outer: loop {
+                debug!("outer incoming loop");
 
-                {
-                    let json = serde_json::to_string_pretty(&message)?;
+                let mut response = String::new();
+                let mut typing = None;
 
-                    info!("sending new discord message: {json}");
-                }
+                loop {
+                    debug!("inner incoming loop");
 
-                outgoing.send(&gemini::model::outgoing::OutgoingMessage {
-                    client_content: gemini::model::outgoing::ClientContent {
-                        turns: vec![gemini::model::Content::new(json)],
-                        turn_complete: iter.peek().is_none(),
-                    },
-                })?;
-            }
-        }
+                    let bytes = match incoming.next().await {
+                        Some(Message::Binary(bytes)) => bytes,
+                        Some(Message::Close(_)) | None => {
+                            warn!("ws closed");
 
-        anyhow::Ok(())
-    });
+                            break 'outer;
+                        }
+                        _ => continue,
+                    };
 
-    const LIVE_ID: Id<ChannelMarker> = Id::new(1320753531329974374);
+                    let incoming_message: gemini::model::incoming::IncomingMessage =
+                        serde_json::from_slice(&bytes)?;
 
-    loop {
-        let mut response = String::new();
-        let mut typing = None;
+                    let text = incoming_message
+                        .server_content
+                        .model_turn
+                        .parts
+                        .first()
+                        .and_then(|part| part.as_text());
 
-        loop {
-            let bytes = match incoming.next().await {
-                Some(Message::Binary(bytes)) => bytes,
-                Some(Message::Close(_)) | None => break,
-                _ => continue,
-            };
+                    if let Some(text) = text {
+                        response.push_str(text);
 
-            let incoming_message: gemini::model::incoming::IncomingMessage =
-                serde_json::from_slice(&bytes)?;
-
-            let text = incoming_message
-                .server_content
-                .model_turn
-                .parts
-                .first()
-                .and_then(|part| part.as_text());
-
-            if let Some(text) = text {
-                response.push_str(text);
-
-                if !response.trim().is_empty() && typing.is_none() {
-                    typing = Some(discord::typing::start(Arc::clone(&client), LIVE_ID))
-                }
-            }
-
-            if incoming_message.server_content.turn_complete {
-                let response = response.trim();
-
-                if !response.is_empty() {
-                    /*tokio::time::sleep(std::time::Duration::from_secs_f64(typing_duration(
-                        &response,
-                    )))
-                    .await;*/
-
-                    if let Err(error) = client.create_message(LIVE_ID).content(response).await {
-                        warn!(source = ?error, "error creating message");
+                        if !response.trim().is_empty() && typing.is_none() {
+                            debug!("start typing");
+                            typing = Some(discord::typing::start(Arc::clone(&client), LIVE_ID))
+                        }
                     }
-                } else {
-                    warn!("response is empty");
-                }
 
-                break;
+                    if incoming_message.server_content.turn_complete {
+                        let response = response.trim();
+
+                        if !response.is_empty() {
+                            /*tokio::time::sleep(std::time::Duration::from_secs_f64(typing_duration(
+                                &response,
+                            )))
+                            .await;*/
+
+                            debug!("send message");
+
+                            if let Err(error) =
+                                client.create_message(LIVE_ID).content(response).await
+                            {
+                                warn!(source = ?error, "error creating message");
+                            }
+                        } else {
+                            warn!("response is empty");
+                        }
+
+                        break;
+                    }
+                }
             }
+
+            anyhow::Ok(())
+        });
+
+        debug!("start inner discord message queue loop");
+
+        while !message_queue.is_empty() {
+            debug!("message queue has: {} items", message_queue.len());
+
+            {
+                let mut iter = message_queue.drain(..).peekable();
+
+                while let Some(message) = iter.next() {
+                    debug!("discord message outgoing loop");
+
+                    let json = serde_json::to_string(&message)?;
+
+                    {
+                        let json = serde_json::to_string_pretty(&message)?;
+
+                        info!("sending new discord message: {json}");
+                    }
+
+                    outgoing.send(&gemini::model::outgoing::OutgoingMessage {
+                        client_content: gemini::model::outgoing::ClientContent {
+                            turns: vec![gemini::model::Content::new(json)],
+                            turn_complete: iter.peek().is_none(),
+                        },
+                    })?;
+                }
+            }
+
+            message_queue.extend(discord.drain().await);
         }
     }
+
+    Ok(())
 }
 
 fn typing_duration(text: &str) -> f64 {

@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use twilight_gateway::{Event, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_model::id::marker::{ChannelMarker, MessageMarker, UserMarker};
@@ -24,15 +27,20 @@ pub struct Message {
     pub channel_id: Id<ChannelMarker>,
 }
 
+#[derive(Clone)]
 pub struct Discord {
-    stream: UnboundedReceiver<Message>,
+    stream: Arc<Mutex<UnboundedReceiver<Message>>>,
 }
 
 impl Discord {
     pub async fn drain(&mut self) -> Vec<Message> {
         let mut messages = Vec::new();
 
-        self.stream.recv_many(&mut messages, usize::MAX).await;
+        self.stream
+            .lock()
+            .await
+            .recv_many(&mut messages, usize::MAX)
+            .await;
 
         messages
     }
@@ -91,5 +99,7 @@ pub fn start(token: String) -> Discord {
         }
     });
 
-    Discord { stream: receiver }
+    Discord {
+        stream: Arc::new(Mutex::new(receiver)),
+    }
 }

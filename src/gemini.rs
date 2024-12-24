@@ -68,13 +68,13 @@ pub async fn connect(settings: LiveSettings) -> anyhow::Result<(Outgoing, Incomi
             let Ok(message) = item else {
                 error!(source = ?item.unwrap_err(), "error receving message");
 
-                break;
+                return anyhow::Ok(());
             };
 
             if let Err(error) = incoming_sender.send(message) {
                 error!(source = ?error, "error sending message");
 
-                break;
+                return anyhow::Ok(());
             }
         }
 
@@ -84,6 +84,7 @@ pub async fn connect(settings: LiveSettings) -> anyhow::Result<(Outgoing, Incomi
     let mut outgoing = Outgoing {
         sink: outgoing_sender,
     };
+
     let mut incoming = Incoming {
         stream: incoming_recevier,
     };
