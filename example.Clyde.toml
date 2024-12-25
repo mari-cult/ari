@@ -1,5 +1,6 @@
 [discord]
 token = "..."
+names = [ "cleo" ]
 
 # their messages will be completely ignored
 blacklisted_users = []

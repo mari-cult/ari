@@ -76,6 +76,7 @@ struct Claide {
 
 impl Claide {
     fn new(settings: settings::Settings) -> Self {
+        let names = settings.discord.names.clone();
         Self {
             gemini: GeminiClient::new(settings.gemini.api_key.clone()),
             seen: Default::default(),
@@ -83,7 +84,7 @@ impl Claide {
             http_client: reqwest::Client::new(),
             name_matcher: AhoCorasick::builder()
                 .ascii_case_insensitive(true)
-                .build(["cleo"])
+                .build(names)
                 .unwrap(),
         }
     }

@@ -75,6 +75,7 @@ impl<'de> Deserialize<'de> for DomainMatcher {
 #[derive(Clone, Debug, Deserialize)]
 pub struct DiscordSettings {
     pub token: String,
+    pub names: Vec<String>,
     #[serde(default)]
     pub blacklisted_users: HashSet<u64>,
 }
