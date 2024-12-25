@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 aho-corasick.workspace = true
 anyhow.workspace = true
+clap = { version = "4.5.23", features = ["derive"] }
 figment.workspace = true
 futures-util.workspace = true
 google-gemini.workspace = true

@@ -19,6 +19,7 @@ use std::sync::LazyLock;
 extern crate alloc;
 
 mod attachment;
+mod cli;
 mod model;
 mod settings;
 mod util;
@@ -378,7 +379,8 @@ impl EventHandler for Claide {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let settings = settings::try_load()?;
+    let cli = cli::parse_cli();
+    let settings = settings::try_load(&cli.config)?;
 
     let mut cache_settings = Settings::default();
 

@@ -8,7 +8,7 @@ use serde::de::Error;
 use serde::{de, Deserialize, Deserializer};
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Checks wether domain overlaps with given list
 #[derive(Clone, Debug)]
@@ -102,8 +102,8 @@ where
     fs::read_to_string(path).map_err(Error::custom)
 }
 
-pub fn try_load() -> figment::Result<Settings> {
-    Figment::new().merge(Toml::file("Clyde.toml")).extract()
+pub fn try_load(config_path: &Path) -> figment::Result<Settings> {
+    Figment::new().merge(Toml::file(config_path)).extract()
 }
 
 #[cfg(test)]
