@@ -4,7 +4,6 @@ use serde_json::Value;
 
 #[derive(Clone, Debug, Deserialize, Display, Serialize)]
 #[display("{text}")]
-#[serde(rename_all = "camelCase")]
 pub struct TextPart {
     pub text: String,
     #[serde(default, skip_serializing)]
@@ -12,28 +11,24 @@ pub struct TextPart {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct InlineDataPart {
     pub mime_type: String,
     pub data: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct FunctionCallPart {
     pub name: String,
     pub args: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct FunctionResponsePart {
     pub name: String,
     pub response: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct FileDataPart {
     pub mime_type: String,
     pub file_uri: String,
@@ -47,7 +42,6 @@ pub enum ExecutableCodeLanguage {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ExecutableCodePart {
     pub language: ExecutableCodeLanguage,
     pub code: String,
@@ -63,14 +57,13 @@ pub enum Outcome {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CodeExecutionResultPart {
     pub outcome: Outcome,
     pub output: String,
 }
 
 #[derive(Clone, Debug, Deserialize, From, Serialize)]
-#[serde(rename_all = "camelCase", untagged)]
+#[serde(untagged)]
 pub enum Part {
     Text(TextPart),
     InlineData(InlineDataPart),
