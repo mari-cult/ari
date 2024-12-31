@@ -189,9 +189,13 @@ impl Claide {
 
         let mut request = GeminiRequest::default();
 
-        request.system_instruction.parts.push(GeminiSystemPart {
-            text: format!("{}\n{}", self.settings.gemini.personality, *SCHEMA),
-        });
+        request
+            .system_instruction
+            .get_or_insert_default()
+            .parts
+            .push(GeminiSystemPart {
+                text: format!("{}\n{}", self.settings.gemini.personality, *SCHEMA),
+            });
 
         request
             .generation_config
