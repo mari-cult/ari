@@ -1,11 +1,14 @@
-use alloc::borrow::Cow;
 use core::time::Duration;
 use mime::Mime;
 use reqwest::header::{HeaderName, HeaderValue, CONTENT_LENGTH};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+pub use self::content::{FileDataPart, Part, TextPart};
+
 extern crate alloc;
+
+pub mod content;
 
 const BASE_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -89,28 +92,12 @@ pub struct GeminiCandidate {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GeminiMessage {
     pub role: GeminiRole,
-    pub parts: Vec<GeminiPart>,
+    pub parts: Vec<Part>,
 }
 
 impl GeminiMessage {
-    pub fn new(role: GeminiRole, parts: Vec<GeminiPart>) -> Self {
+    pub fn new(role: GeminiRole, parts: Vec<Part>) -> Self {
         Self { role, parts }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GeminiPart {
-    Text(String),
-    FileData {
-        mime_type: Cow<'static, str>,
-        file_uri: String,
-    },
-}
-
-impl From<String> for GeminiPart {
-    fn from(text: String) -> Self {
-        Self::Text(text)
     }
 }
 
@@ -245,7 +232,7 @@ impl GeminiClient {
         Ok(response.file.uri)
     }
 
-    pub async fn generate(&self, request: GeminiRequest) -> anyhow::Result<String> {
+    pub async fn generate(&self, request: GeminiRequest) -> anyhow::Result<Vec<Part>> {
         let url = self.with_base("v1beta/models/gemini-2.0-flash-exp:generateContent");
         let query = [("key", &self.api_key)];
 
@@ -272,17 +259,13 @@ impl GeminiClient {
             Err(_error) => return Err(anyhow::anyhow!("{response}")),
         };
 
-        let content = response
+        let parts = response
             .candidates
             .into_iter()
             .flat_map(|candidate| candidate.content.parts)
-            .flat_map(|part| match part {
-                GeminiPart::Text(text) => Some(text),
-                _ => None,
-            })
-            .collect::<String>();
+            .collect::<Vec<_>>();
 
-        Ok(content)
+        Ok(parts)
     }
 }
 
