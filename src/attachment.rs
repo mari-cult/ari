@@ -1,7 +1,7 @@
 use crate::Claide;
 use alloc::borrow::Cow;
 use anyhow::Context;
-use google_gemini::{GeminiClient, GeminiPart};
+use google_gemini::{FileDataPart, GeminiClient, Part};
 use mime::Mime;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Url;
@@ -137,11 +137,11 @@ impl GeminiUpload for Attachment {
     }
 }
 
-impl From<GeminiAttachment> for GeminiPart {
+impl From<GeminiAttachment> for Part {
     fn from(value: GeminiAttachment) -> Self {
-        Self::FileData {
-            mime_type: value.content_type,
+        Self::FileData(FileDataPart {
+            mime_type: value.content_type.to_string(),
             file_uri: value.uri,
-        }
+        })
     }
 }

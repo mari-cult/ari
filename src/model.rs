@@ -58,13 +58,13 @@ impl From<id::MessageId> for MessageId {
 }
 
 impl fmt::Display for MessageId {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         fmt::Display::fmt(&self.get(), fmt)
     }
 }
 
 impl fmt::Debug for MessageId {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         fmt::Debug::fmt(&self.get(), fmt)
     }
 }

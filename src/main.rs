@@ -3,8 +3,8 @@ use aho_corasick::AhoCorasick;
 use core::time::Duration;
 use futures_util::StreamExt;
 use google_gemini::{
-    GeminiClient, GeminiMessage, GeminiPart, GeminiRequest, GeminiRole, GeminiSafetySetting,
-    GeminiSafetyThreshold, GeminiSystemPart,
+    GeminiClient, GeminiMessage, GeminiRequest, GeminiRole, GeminiSafetySetting,
+    GeminiSafetyThreshold, GeminiSystemPart, Part, TextPart,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -237,9 +237,9 @@ impl Claide {
                 .await
                 .into_iter()
                 .flatten()
-                .map(GeminiPart::from);
+                .map(Part::from);
 
-            let mut parts = vec![GeminiPart::from(text.to_string())];
+            let mut parts = vec![Part::from(text.to_string())];
 
             parts.extend(iter);
 
@@ -252,8 +252,23 @@ impl Claide {
 
         tracing::debug!("send request: {request:#?}");
 
-        let content = match self.gemini.generate(request).await {
-            Ok(content) => content,
+        let response = self.gemini.generate(request).await;
+
+        let text = match response.as_deref() {
+            Ok(
+                [Part::Text(TextPart {
+                    text,
+                    thought: false,
+                })],
+            ) => text,
+            Ok(_parts) => {
+                let mut builder = CreateMessage::new();
+                builder = builder.content("```\nissue```\n-# repor issue to mari".to_string());
+
+                message.channel_id.send_message(&context, builder).await?;
+
+                return Ok(());
+            }
             Err(error) => {
                 let mut builder = CreateMessage::new();
                 builder = builder.content(format!("```\n{error}```\n-# repor issue to mari"));
@@ -264,7 +279,7 @@ impl Claide {
             }
         };
 
-        let actions: GenResponse = match serde_json::from_str(&content) {
+        let actions: GenResponse = match serde_json::from_str(text) {
             Ok(content) => content,
             Err(error) => anyhow::bail!("invalid response: {error}"),
         };

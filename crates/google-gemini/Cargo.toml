@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow.workspace = true
+derive_more = { version = "1.0.0", default-features = false, features = ["display", "error", "from"] }
 mime.workspace = true
 reqwest.workspace = true
 serde.workspace = true
