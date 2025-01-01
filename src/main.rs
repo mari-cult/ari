@@ -279,12 +279,16 @@ impl Claide {
             }
         };
 
-        let actions: GenResponse = match serde_json::from_str(text) {
+        let result = serde_json::from_str::<GenResponse>(text)
+            .map(|resp| resp.0)
+            .or_else(|_error| serde_json::from_str::<Action>(text).map(|value| vec![value]));
+
+        let actions = match result {
             Ok(content) => content,
             Err(error) => anyhow::bail!("invalid response: {error}"),
         };
 
-        for action in actions.0 {
+        for action in actions {
             match action {
                 Action::SendMessage {
                     referenced_message,
