@@ -66,6 +66,12 @@ pub struct CodeExecutionResultPart {
 #[serde(untagged)]
 pub enum Part {
     Text(TextPart),
+    TaggedPart(TaggedPart),
+}
+
+#[derive(Clone, Debug, Deserialize, From, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaggedPart {
     InlineData(InlineDataPart),
     FunctionCall(FunctionCallPart),
     FunctionResponse(FunctionResponsePart),
