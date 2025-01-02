@@ -4,6 +4,7 @@ use serde_json::Value as Object;
 
 use self::system::System;
 
+pub mod schema;
 mod system;
 
 #[derive(Default, Serialize)]
