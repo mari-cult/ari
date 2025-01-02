@@ -600,12 +600,22 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "derive_more",
+ "gemini-model",
  "mime",
  "reqwest 0.12.11",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "gemini-model"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

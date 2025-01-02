@@ -1,8 +1,8 @@
 use crate::Claide;
 use alloc::borrow::Cow;
 use anyhow::Context;
-use gemini::content::TaggedPart;
-use gemini::{FileDataPart, GeminiClient, Part};
+use gemini::model::content::{FileDataPart, Part, TaggedPart};
+use gemini::GeminiClient;
 use mime::Mime;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Url;
