@@ -66,6 +66,7 @@ impl IntoFuture for GenerateContent<'_> {
     type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send + Sync + 'static>>;
 
     fn into_future(self) -> Self::IntoFuture {
+        let model = self.model;
         let mut request = model::GenerateContent::new()
             .system(self.system)
             .json(self.json);
@@ -74,7 +75,7 @@ impl IntoFuture for GenerateContent<'_> {
 
         let url = self
             .http
-            .with_base("v1beta/models/gemini-2.0-flash-exp:generateContent");
+            .with_base(&format!("v1beta/models/{model}:generateContent"));
 
         let query = [("key", &self.http.api_key)];
 
