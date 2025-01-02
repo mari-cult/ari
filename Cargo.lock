@@ -252,7 +252,7 @@ dependencies = [
  "anyhow",
  "figment",
  "futures-util",
- "google-gemini",
+ "gemini",
  "linkify",
  "mime",
  "reqwest 0.12.11",
@@ -595,6 +595,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gemini"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "mime",
+ "reqwest 0.12.11",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -622,20 +636,6 @@ name = "gimli"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
-
-[[package]]
-name = "google-gemini"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "derive_more",
- "mime",
- "reqwest 0.12.11",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "h2"
