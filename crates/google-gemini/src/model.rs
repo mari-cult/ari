@@ -80,7 +80,7 @@ pub enum BlockThreshold {
 #[derive(Serialize)]
 pub struct GenerateContent<'a> {
     #[serde(skip_serializing_if = "System::is_empty")]
-    pub system_instruction: System<'a>,
+    system_instruction: System<'a>,
     pub contents: Vec<GeminiMessage>,
     #[serde(rename = "safetySettings", skip_serializing_if = "Vec::is_empty")]
     pub safety_settings: Vec<SafetySetting>,
@@ -91,7 +91,7 @@ pub struct GenerateContent<'a> {
 impl<'a> GenerateContent<'a> {
     pub const fn new() -> Self {
         Self {
-            system_instruction: System::new(""),
+            system_instruction: System::new(),
             contents: Vec::new(),
             safety_settings: Vec::new(),
             generation_config: GenerationConfig::new(),
@@ -99,7 +99,7 @@ impl<'a> GenerateContent<'a> {
     }
 
     pub const fn system(mut self, system: &'a str) -> Self {
-        self.system_instruction = System::new(system);
+        self.system_instruction = System::from(system);
         self
     }
 
