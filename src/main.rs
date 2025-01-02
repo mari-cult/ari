@@ -2,10 +2,8 @@ use self::attachment::{Attachment, GeminiAttachment, GeminiUpload};
 use aho_corasick::AhoCorasick;
 use core::time::Duration;
 use futures_util::StreamExt;
-use google_gemini::{
-    GeminiClient, GeminiMessage, GeminiRequest, GeminiRole, GeminiSafetySetting,
-    GeminiSafetyThreshold, GeminiSystemPart, Part, TextPart,
-};
+use google_gemini::model::{BlockThreshold, GeminiMessage, GeminiRole, SafetyCategory};
+use google_gemini::{GeminiClient, Part, TextPart};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -187,33 +185,18 @@ impl Claide {
             previous_messages
         };
 
-        let mut request = GeminiRequest::default();
+        let system = format!("{}\n{}", self.settings.gemini.personality, *SCHEMA);
 
-        request
-            .system_instruction
-            .get_or_insert_default()
-            .parts
-            .push(GeminiSystemPart {
-                text: format!("{}\n{}", self.settings.gemini.personality, *SCHEMA),
-            });
-
-        request
-            .generation_config
-            .get_or_insert_default()
-            .response_mime_type
-            .push_str("application/json");
-
-        let settings = [
-            GeminiSafetySetting::HarmCategoryHarassment,
-            GeminiSafetySetting::HarmCategoryHateSpeech,
-            GeminiSafetySetting::HarmCategorySexuallyExplicit,
-            GeminiSafetySetting::HarmCategoryDangerousContent,
-            GeminiSafetySetting::HarmCategoryCivicIntegrity,
-        ];
-
-        let settings = settings.map(|setting| (setting)(GeminiSafetyThreshold::BlockNone));
-
-        request.safety_settings.extend(settings);
+        let mut generate_content = self
+            .gemini
+            .generate_content("gemini-2.0-exp-flash")
+            .system(&system)
+            .json(true)
+            .safety(SafetyCategory::Harassment, BlockThreshold::None)
+            .safety(SafetyCategory::HateSpeech, BlockThreshold::None)
+            .safety(SafetyCategory::SexuallyExplicit, BlockThreshold::None)
+            .safety(SafetyCategory::DangerousContent, BlockThreshold::None)
+            .safety(SafetyCategory::CivicIntegrity, BlockThreshold::None);
 
         for (role, text, attachments) in previous_messages {
             let attachment = attachments.into_iter().map(|attachment| async move {
@@ -243,16 +226,12 @@ impl Claide {
 
             parts.extend(iter);
 
-            request.contents.push(GeminiMessage::new(role, parts));
+            let message = GeminiMessage::new(role, parts);
+
+            generate_content = generate_content.message(message)
         }
 
-        if request.contents.is_empty() {
-            anyhow::bail!("request is empty");
-        }
-
-        tracing::debug!("send request: {request:#?}");
-
-        let response = self.gemini.generate(request).await;
+        let response = generate_content.await;
 
         let text = match response.as_deref() {
             Ok(

@@ -2,13 +2,14 @@ use core::time::Duration;
 use mime::Mime;
 use reqwest::header::{HeaderName, HeaderValue, CONTENT_LENGTH};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 
 pub use self::content::{FileDataPart, Part, TextPart};
 
 extern crate alloc;
 
 pub mod content;
+pub mod model;
+pub mod request;
 
 const BASE_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -25,109 +26,6 @@ const RESUMABLE: HeaderValue = HeaderValue::from_static("resumable");
 const START: HeaderValue = HeaderValue::from_static("start");
 const UPLOAD_FINALIZE: HeaderValue = HeaderValue::from_static("upload, finalize");
 const ZERO: HeaderValue = HeaderValue::from_static("0");
-
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct GeminiRequest {
-    pub system_instruction: Option<GeminiSystemInstruction>,
-    pub contents: Vec<GeminiMessage>,
-    #[serde(rename = "safetySettings")]
-    pub safety_settings: Vec<GeminiSafetySetting>,
-    pub generation_config: Option<GeminiGenerationConfig>,
-}
-
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct GeminiGenerationConfig {
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub response_mime_type: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-#[serde(tag = "category", content = "threshold")]
-pub enum GeminiSafetySetting {
-    HarmCategoryHarassment(GeminiSafetyThreshold),
-    HarmCategoryHateSpeech(GeminiSafetyThreshold),
-    HarmCategorySexuallyExplicit(GeminiSafetyThreshold),
-    HarmCategoryDangerousContent(GeminiSafetyThreshold),
-    HarmCategoryCivicIntegrity(GeminiSafetyThreshold),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum GeminiSafetyThreshold {
-    BlockNone,
-}
-
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct GeminiSystemInstruction {
-    pub parts: Vec<GeminiSystemPart>,
-}
-
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct GeminiSystemPart {
-    pub text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GeminiResponse {
-    pub candidates: Vec<GeminiCandidate>,
-    pub usage_metadata: GeminiUsageMetadata,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GeminiUsageMetadata {
-    pub prompt_token_count: u32,
-    #[serde(default)]
-    pub candidates_token_count: u32,
-    pub total_token_count: u32,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct GeminiCandidate {
-    pub content: GeminiMessage,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct GeminiMessage {
-    pub role: GeminiRole,
-    pub parts: Vec<Part>,
-}
-
-impl GeminiMessage {
-    pub fn new(role: GeminiRole, parts: Vec<Part>) -> Self {
-        Self { role, parts }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GeminiRole {
-    User,
-    Model,
-}
-
-#[derive(Serialize)]
-struct GeminiCreateFile<'a> {
-    file: GeminiFile<'a>,
-}
-
-#[derive(Serialize)]
-struct GeminiFile<'a> {
-    display_name: &'a str,
-}
-
-#[derive(Debug, Deserialize)]
-struct GeminiFileResponse {
-    file: GeminiFileUri,
-}
-
-#[derive(Debug, Deserialize)]
-struct GeminiFileUri {
-    uri: String,
-    state: String,
-}
 
 pub struct GeminiClient {
     api_key: String,
@@ -163,12 +61,8 @@ impl GeminiClient {
         content_type: &str,
     ) -> anyhow::Result<String> {
         let url = self.with_base("upload/v1beta/files");
-        let query = [("key", &self.api_key)];
-        let request = GeminiCreateFile {
-            file: GeminiFile {
-                display_name: file_name,
-            },
-        };
+        let query = model::Authentication::new(&self.api_key);
+        let request = model::CreateFile::new(file_name);
 
         let response = self
             .client
@@ -197,7 +91,8 @@ impl GeminiClient {
         content_length: u32,
         bytes: Vec<u8>,
     ) -> anyhow::Result<String> {
-        let query = [("key", &self.api_key)];
+        let query = model::Authentication::new(&self.api_key);
+
         let mut response = self
             .client
             .post(url)
@@ -207,12 +102,10 @@ impl GeminiClient {
             .body(bytes)
             .send()
             .await?
-            .json::<GeminiFileResponse>()
+            .json::<model::CreateFileResponse>()
             .await?;
 
-        tracing::debug!("initial upload file response: {response:#?}");
-
-        while response.file.state == "PROCESSING" {
+        while response.file.state == model::State::Pending {
             tokio::time::sleep(Duration::from_secs(5)).await;
 
             response.file = self
@@ -220,52 +113,16 @@ impl GeminiClient {
                 .get(response.file.uri)
                 .query(&query)
                 .send()
-                .await
-                .inspect_err(|error| tracing::error!("processing file: {error}"))?
+                .await?
                 .json()
-                .await
-                .inspect_err(|error| tracing::error!("processing file: {error}"))?;
-
-            tracing::debug!("processing file response: {response:#?}");
+                .await?;
         }
 
         Ok(response.file.uri)
     }
 
-    pub async fn generate(&self, request: GeminiRequest) -> anyhow::Result<Vec<Part>> {
-        let url = self.with_base("v1beta/models/gemini-2.0-flash-exp:generateContent");
-        let query = [("key", &self.api_key)];
-
-        let response = self
-            .client
-            .post(url)
-            .query(&query)
-            .json(&request)
-            .send()
-            .await?
-            .json::<serde_json::Value>()
-            .await?;
-
-        tracing::debug!(
-            "generate response: {}",
-            serde_json::to_string_pretty(&response).unwrap()
-        );
-
-        let result =
-            serde_json::from_str::<GeminiResponse>(&serde_json::to_string(&response).unwrap());
-
-        let response = match result {
-            Ok(response) => response,
-            Err(_error) => return Err(anyhow::anyhow!("{response}")),
-        };
-
-        let parts = response
-            .candidates
-            .into_iter()
-            .flat_map(|candidate| candidate.content.parts)
-            .collect::<Vec<_>>();
-
-        Ok(parts)
+    pub const fn generate_content<'a>(&'a self, model: &'a str) -> request::GenerateContent<'a> {
+        request::GenerateContent::new(self, model)
     }
 }
 
