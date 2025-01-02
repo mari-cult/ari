@@ -3,13 +3,13 @@ use mime::Mime;
 use reqwest::header::{HeaderName, HeaderValue, CONTENT_LENGTH};
 use reqwest::Client;
 
-pub use self::content::{FileDataPart, Part, TextPart};
+use gemini_model::{Authentication, CreateFile, CreateFileResponse, State};
 
 extern crate alloc;
 
-pub mod content;
-pub mod model;
 pub mod request;
+
+pub use gemini_model as model;
 
 const BASE_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -61,8 +61,8 @@ impl GeminiClient {
         content_type: &str,
     ) -> anyhow::Result<String> {
         let url = self.with_base("upload/v1beta/files");
-        let query = model::Authentication::new(&self.api_key);
-        let request = model::CreateFile::new(file_name);
+        let query = Authentication::new(&self.api_key);
+        let request = CreateFile::new(file_name);
 
         let response = self
             .client
@@ -91,7 +91,7 @@ impl GeminiClient {
         content_length: u32,
         bytes: Vec<u8>,
     ) -> anyhow::Result<String> {
-        let query = model::Authentication::new(&self.api_key);
+        let query = Authentication::new(&self.api_key);
 
         let mut response = self
             .client
@@ -102,10 +102,10 @@ impl GeminiClient {
             .body(bytes)
             .send()
             .await?
-            .json::<model::CreateFileResponse>()
+            .json::<CreateFileResponse>()
             .await?;
 
-        while response.file.state == model::State::Pending {
+        while response.file.state == State::Pending {
             tokio::time::sleep(Duration::from_secs(5)).await;
 
             response.file = self

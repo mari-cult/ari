@@ -1,12 +1,9 @@
 use std::future::{Future, IntoFuture};
 use std::pin::Pin;
 
+use gemini_model::content::Part;
+use gemini_model::{BlockThreshold, GeminiMessage, GeminiResponse, SafetyCategory, SafetySetting};
 use tracing::info;
-
-use crate::model::{
-    self, BlockThreshold, GeminiMessage, GeminiResponse, SafetyCategory, SafetySetting,
-};
-use crate::Part;
 
 #[derive(Clone)]
 pub struct GenerateContent<'a> {
@@ -67,7 +64,7 @@ impl IntoFuture for GenerateContent<'_> {
 
     fn into_future(self) -> Self::IntoFuture {
         let model = self.model;
-        let mut request = model::GenerateContent::new()
+        let mut request = gemini_model::GenerateContent::new()
             .system(self.system)
             .json(self.json);
 

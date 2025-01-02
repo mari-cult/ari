@@ -51,9 +51,11 @@ resolver = "2"
 [workspace.dependencies]
 aho-corasick = "1.1"
 anyhow = "1"
+derive_more = { version = "1", default-features = false, features = ["display", "error", "from"] }
 figment = { version = "0.10", features = ["toml"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 gemini = { version = "0.1.0", path = "crates/gemini" }
+gemini-model = { version = "0.1.0", path = "crates/gemini-model" }
 linkify = "0.10"
 mime = "0.3"
 regex = "1.11"

@@ -1,10 +1,11 @@
-use super::content::Part;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Object;
 
+use self::content::Part;
 use self::generation_config::GenerationConfig;
 use self::system::System;
 
+pub mod content;
 mod generation_config;
 pub mod schema;
 mod system;
