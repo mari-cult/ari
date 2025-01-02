@@ -2,46 +2,12 @@ use super::content::Part;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Object;
 
+use self::generation_config::GenerationConfig;
 use self::system::System;
 
+mod generation_config;
 pub mod schema;
 mod system;
-
-#[derive(Default, Serialize)]
-pub(crate) struct GenerationConfig {
-    #[serde(skip_serializing_if = "ResponseMimeType::is_text")]
-    pub(crate) response_mime_type: ResponseMimeType,
-}
-
-impl GenerationConfig {
-    pub const fn new() -> Self {
-        Self {
-            response_mime_type: ResponseMimeType::Text,
-        }
-    }
-
-    pub fn is_default(&self) -> bool {
-        self.response_mime_type.is_text()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[non_exhaustive]
-pub enum ResponseMimeType {
-    #[default]
-    #[serde(rename = "text/plain")]
-    Text,
-    #[serde(rename = "text/x.enum")]
-    Enum,
-    #[serde(rename = "application/json")]
-    Json,
-}
-
-impl ResponseMimeType {
-    pub fn is_text(&self) -> bool {
-        matches!(self, Self::Text)
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct SafetySetting {
@@ -84,8 +50,8 @@ pub struct GenerateContent<'a> {
     pub contents: Vec<GeminiMessage>,
     #[serde(rename = "safetySettings", skip_serializing_if = "Vec::is_empty")]
     pub safety_settings: Vec<SafetySetting>,
-    #[serde(skip_serializing_if = "GenerationConfig::is_default")]
-    pub generation_config: GenerationConfig,
+    #[serde(skip_serializing_if = "GenerationConfig::is_text")]
+    generation_config: GenerationConfig,
 }
 
 impl<'a> GenerateContent<'a> {
@@ -104,12 +70,7 @@ impl<'a> GenerateContent<'a> {
     }
 
     pub const fn json(mut self, json: bool) -> Self {
-        self.generation_config.response_mime_type = if json {
-            ResponseMimeType::Json
-        } else {
-            ResponseMimeType::Text
-        };
-
+        self.generation_config = self.generation_config.json(json);
         self
     }
 }
