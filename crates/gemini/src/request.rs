@@ -1,8 +1,8 @@
+use gemini_model::content::Part;
+use gemini_model::safety_setting::{BlockThreshold, SafetyCategory, SafetySetting};
+use gemini_model::{GeminiMessage, GeminiResponse};
 use std::future::{Future, IntoFuture};
 use std::pin::Pin;
-
-use gemini_model::content::Part;
-use gemini_model::{BlockThreshold, GeminiMessage, GeminiResponse, SafetyCategory, SafetySetting};
 use tracing::info;
 
 #[derive(Clone)]
