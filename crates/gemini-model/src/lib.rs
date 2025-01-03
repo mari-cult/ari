@@ -3,12 +3,12 @@ use serde_json::Value as Object;
 
 use self::content::Part;
 use self::generation_config::GenerationConfig;
-use self::system::System;
+use self::system_instructions::SystemInstructions;
 
 pub mod content;
 mod generation_config;
 pub mod schema;
-mod system;
+mod system_instructions;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct SafetySetting {
@@ -46,8 +46,8 @@ pub enum BlockThreshold {
 
 #[derive(Serialize)]
 pub struct GenerateContent<'a> {
-    #[serde(skip_serializing_if = "System::is_empty")]
-    system_instruction: System<'a>,
+    #[serde(skip_serializing_if = "SystemInstructions::is_empty")]
+    system_instruction: SystemInstructions<'a>,
     pub contents: Vec<GeminiMessage>,
     #[serde(rename = "safetySettings", skip_serializing_if = "Vec::is_empty")]
     pub safety_settings: Vec<SafetySetting>,
@@ -58,15 +58,15 @@ pub struct GenerateContent<'a> {
 impl<'a> GenerateContent<'a> {
     pub const fn new() -> Self {
         Self {
-            system_instruction: System::new(),
+            system_instruction: SystemInstructions::new(),
             contents: Vec::new(),
             safety_settings: Vec::new(),
             generation_config: GenerationConfig::new(),
         }
     }
 
-    pub const fn system(mut self, system: &'a str) -> Self {
-        self.system_instruction = System::from(system);
+    pub const fn system_instructions(mut self, system_instructions: &'a str) -> Self {
+        self.system_instruction = SystemInstructions::from(system_instructions);
         self
     }
 

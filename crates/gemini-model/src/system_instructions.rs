@@ -14,20 +14,22 @@ struct Part<'a> {
 ///
 /// Serializes to `{ "parts": [<Part>] }`.
 #[derive(Serialize)]
-pub(super) struct System<'a> {
+pub(super) struct SystemInstructions<'a> {
     parts: [Part<'a>; 1],
 }
 
-impl<'a> System<'a> {
+impl<'a> SystemInstructions<'a> {
     /// Create an empty system instruction `Contents`.
     pub(super) const fn new() -> Self {
         Self::from("")
     }
 
     /// Create a system instruction `Contents` from the specified string.
-    pub(super) const fn from(system: &'a str) -> Self {
+    pub(super) const fn from(system_instructions: &'a str) -> Self {
         Self {
-            parts: [Part { text: system }],
+            parts: [Part {
+                text: system_instructions,
+            }],
         }
     }
 
@@ -43,7 +45,7 @@ mod tests {
 
     #[test]
     fn serialize() {
-        let json = serde_json::to_string(&System::from("ok")).unwrap();
+        let json = serde_json::to_string(&SystemInstructions::from("ok")).unwrap();
 
         assert_eq!(json, r#"{"parts":[{"text":"ok"}]}"#);
     }
