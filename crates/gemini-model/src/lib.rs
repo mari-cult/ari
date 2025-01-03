@@ -3,46 +3,14 @@ use serde_json::Value as Object;
 
 use self::content::Part;
 use self::generation_config::GenerationConfig;
+use self::safety_setting::SafetySetting;
 use self::system_instructions::SystemInstructions;
 
 pub mod content;
 mod generation_config;
+mod safety_setting;
 pub mod schema;
 mod system_instructions;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-pub struct SafetySetting {
-    pub category: SafetyCategory,
-    pub threshold: BlockThreshold,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[non_exhaustive]
-pub enum SafetyCategory {
-    #[serde(rename = "HARM_CATEGORY_HARASSMENT")]
-    Harassment,
-    #[serde(rename = "HARM_CATEGORY_HATE_SPEECH")]
-    HateSpeech,
-    #[serde(rename = "HARM_CATEGORY_SEXUALLY_EXPLICIT")]
-    SexuallyExplicit,
-    #[serde(rename = "HARM_CATEGORY_DANGEROUS_CONTENT")]
-    DangerousContent,
-    #[serde(rename = "HARM_CATEGORY_CIVIC_INTEGRITY")]
-    CivicIntegrity,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[non_exhaustive]
-pub enum BlockThreshold {
-    #[serde(rename = "BLOCK_NONE")]
-    None,
-    #[serde(rename = "BLOCK_ONLY_HIGH")]
-    Few,
-    #[serde(rename = "BLOCK_MEDIUM_AND_ABOVE")]
-    Some,
-    #[serde(rename = "BLOCK_LOW_AND_ABOVE")]
-    Most,
-}
 
 #[derive(Serialize)]
 pub struct GenerateContent<'a> {
@@ -50,7 +18,7 @@ pub struct GenerateContent<'a> {
     system_instruction: SystemInstructions<'a>,
     pub contents: Vec<GeminiMessage>,
     #[serde(rename = "safetySettings", skip_serializing_if = "Vec::is_empty")]
-    pub safety_settings: Vec<SafetySetting>,
+    safety_settings: Vec<SafetySetting>,
     #[serde(skip_serializing_if = "GenerationConfig::is_text")]
     generation_config: GenerationConfig,
 }
