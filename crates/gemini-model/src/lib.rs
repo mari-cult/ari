@@ -8,7 +8,7 @@ use self::system_instructions::SystemInstructions;
 
 pub mod content;
 mod generation_config;
-mod safety_setting;
+pub mod safety_setting;
 pub mod schema;
 mod system_instructions;
 
