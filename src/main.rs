@@ -186,12 +186,12 @@ impl Claide {
             previous_messages
         };
 
-        let system = format!("{}\n{}", self.settings.gemini.personality, *SCHEMA);
+        let system_instructions = format!("{}\n{}", self.settings.gemini.personality, *SCHEMA);
 
         let mut generate_content = self
             .gemini
             .generate_content("gemini-2.0-exp-flash")
-            .system(&system)
+            .system_instructions(&system_instructions)
             .json(true)
             .safety(SafetyCategory::Harassment, BlockThreshold::None)
             .safety(SafetyCategory::HateSpeech, BlockThreshold::None)

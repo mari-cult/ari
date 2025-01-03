@@ -9,7 +9,7 @@ use tracing::info;
 pub struct GenerateContent<'a> {
     http: &'a super::GeminiClient,
     model: &'a str,
-    system: &'a str,
+    system_instructions: &'a str,
     json: bool,
     messages: Vec<GeminiMessage>,
     safety: Vec<SafetySetting>,
@@ -20,15 +20,15 @@ impl<'a> GenerateContent<'a> {
         Self {
             http,
             model,
-            system: "",
+            system_instructions: "",
             json: false,
             messages: Vec::new(),
             safety: Vec::new(),
         }
     }
 
-    pub const fn system(mut self, system: &'a str) -> Self {
-        self.system = system;
+    pub const fn system_instructions(mut self, system_instructions: &'a str) -> Self {
+        self.system_instructions = system_instructions;
         self
     }
 
@@ -65,7 +65,7 @@ impl IntoFuture for GenerateContent<'_> {
     fn into_future(self) -> Self::IntoFuture {
         let model = self.model;
         let mut request = gemini_model::GenerateContent::new()
-            .system(self.system)
+            .system_instructions(self.system_instructions)
             .json(self.json);
 
         request.contents = self.messages;
