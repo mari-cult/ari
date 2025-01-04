@@ -25,24 +25,16 @@ tokio = { workspace = true, features = [
 ] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+twilight-cache-inmemory = { git = "https://github.com/twilight-rs/twilight", rev = "7c059974f252f391710ae2b51be357bb36184c28", version = "0.16.0-rc.1", features = [
+    "permission-calculator",
+] }
+twilight-gateway = { git = "https://github.com/twilight-rs/twilight", rev = "7c059974f252f391710ae2b51be357bb36184c28", version = "0.16.0-rc.1" }
+twilight-http = { git = "https://github.com/twilight-rs/twilight", rev = "7c059974f252f391710ae2b51be357bb36184c28", version = "0.16.0-rc.1" }
+twilight-model = { git = "https://github.com/twilight-rs/twilight", rev = "7c059974f252f391710ae2b51be357bb36184c28", version = "0.16.0-rc.1" }
 url.workspace = true
 
 [lints]
 workspace = true
-
-[dependencies.serenity]
-version = "0.12"
-default-features = false
-features = [
-    "builder",
-    "cache",
-    "client",
-    "gateway",
-    "model",
-    "native_tls_backend",
-    "unstable_discord_api",
-    "utils",
-]
 
 [workspace]
 members = ["crates/*"]
@@ -51,14 +43,18 @@ resolver = "2"
 [workspace.dependencies]
 aho-corasick = "1.1"
 anyhow = "1"
-derive_more = { version = "1", default-features = false, features = ["display", "error", "from"] }
+derive_more = { version = "1", default-features = false, features = [
+    "display",
+    "error",
+    "from",
+] }
 figment = { version = "0.10", features = ["toml"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 gemini = { version = "0.1.0", path = "crates/gemini" }
 gemini-model = { version = "0.1.0", path = "crates/gemini-model" }
+claide-vector-db = { version = "0.1.0", path = "crates/claide-vector-db" }
 linkify = "0.10"
 mime = "0.3"
-regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = [
     "brotli",
     "gzip",
