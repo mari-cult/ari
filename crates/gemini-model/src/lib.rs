@@ -1,11 +1,13 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value as Object;
-
 use self::content::Part;
 use self::generation_config::GenerationConfig;
 use self::safety_setting::SafetySetting;
 use self::system_instructions::SystemInstructions;
+use serde::{Deserialize, Serialize};
+use serde_json::Value as Object;
 
+pub use self::authorization::Authentication;
+
+mod authorization;
 pub mod content;
 mod generation_config;
 pub mod safety_setting;
@@ -142,23 +144,4 @@ pub struct Status {
     pub message: String,
     #[serde(default)]
     pub details: Vec<Object>,
-}
-
-#[derive(Serialize)]
-#[serde(transparent)]
-pub struct Authentication<'a> {
-    query_params: [Key<'a>; 1],
-}
-
-#[derive(Serialize)]
-struct Key<'a> {
-    key: &'a str,
-}
-
-impl<'a> Authentication<'a> {
-    pub const fn new(api_key: &'a str) -> Self {
-        Self {
-            query_params: [Key { key: api_key }],
-        }
-    }
 }
