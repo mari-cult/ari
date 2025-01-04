@@ -1,0 +1,12 @@
+[package]
+name = "claide-vector-db"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

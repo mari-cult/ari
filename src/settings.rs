@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-/// Checks wether domain overlaps with given list
+//// Checks wether domain overlaps with given list
 #[derive(Clone, Debug)]
 pub struct DomainMatcher {
     backend: AhoCorasick,
