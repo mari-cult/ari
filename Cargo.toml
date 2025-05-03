@@ -1,75 +1,28 @@
 [package]
-name = "claide"
-version = "0.5.0"
-edition = "2021"
+name = "ari"
+version = "0.6.0"
+edition = "2024"
 
 [dependencies]
-aho-corasick.workspace = true
-anyhow.workspace = true
-figment.workspace = true
-futures-util.workspace = true
-gemini.workspace = true
-linkify.workspace = true
-mime.workspace = true
-reqwest.workspace = true
-schemars = "0.8.21"
-serde.workspace = true
-serde_json.workspace = true
-serde_with = "3.11.0"
-tokio = { workspace = true, features = [
-    "macros",
-    "rt-multi-thread",
-    "signal",
-    "sync",
-    "time",
-] }
-tracing.workspace = true
-tracing-subscriber.workspace = true
-twilight-cache-inmemory = { git = "https://github.com/twilight-rs/twilight", rev = "7c059974f252f391710ae2b51be357bb36184c28", version = "0.16.0-rc.1", features = [
-    "permission-calculator",
-] }
-twilight-gateway = { git = "https://github.com/twilight-rs/twilight", rev = "7c059974f252f391710ae2b51be357bb36184c28", version = "0.16.0-rc.1" }
-twilight-http = { git = "https://github.com/twilight-rs/twilight", rev = "7c059974f252f391710ae2b51be357bb36184c28", version = "0.16.0-rc.1" }
-twilight-model = { git = "https://github.com/twilight-rs/twilight", rev = "7c059974f252f391710ae2b51be357bb36184c28", version = "0.16.0-rc.1" }
-url.workspace = true
+anyhow = { version = "1.0.98", default-features = false, features = ["std"] }
+base64 = { version = "0.22.1", default-features = false, features = ["std"] }
+futures-util = { version = "0.3.31", default-features = false, features = ["std", "sink"] }
+image = { version = "0.25.6", default-features = false, features = ["avif", "bmp", "gif", "jpeg", "png", "pnm", "qoi", "tga", "tiff", "webp"] }
+reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls-webpki-roots", "gzip", "brotli", "zstd", "deflate", "stream", "cookies", "json"] }
+serde = { version = "1.0.219", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.140", default-features = false, features = ["std"] }
+tokio = { version = "1.44.2", default-features = false, features = ["fs", "macros", "process", "rt-multi-thread", "time"] }
+tokio-websockets = { version = "0.11.4", default-features = false, features = ["aws_lc_rs", "client", "getrandom", "rustls-webpki-roots", "simd"] }
+toml = { version = "0.8.22", default-features = false, features = ["display", "parse"] }
+tracing = { version = "0.1.41", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.19", default-features = false, features = ["ansi", "env-filter"] }
+twilight-cache-inmemory = { version = "0.16.0", default-features = false, features = ["permission-calculator"] }
+twilight-gateway = { version = "0.16.0", default-features = false, features = ["rustls-aws-lc-rs", "rustls-webpki-roots", "simd-json", "zlib-simd"] }
+twilight-http = { version = "0.16.0", default-features = false, features = ["decompression", "rustls-aws-lc-rs", "rustls-webpki-roots", "simd-json"] }
+twilight-model = { version = "0.16.0", default-features = false }
 
-[lints]
-workspace = true
+[profile.dev]
+opt-level = 2
 
-[workspace]
-members = ["crates/*"]
-resolver = "2"
-
-[workspace.dependencies]
-aho-corasick = "1.1"
-anyhow = "1"
-derive_more = { version = "1", default-features = false, features = [
-    "display",
-    "error",
-    "from",
-] }
-figment = { version = "0.10", features = ["toml"] }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-gemini = { version = "0.1.0", path = "crates/gemini" }
-gemini-model = { version = "0.1.0", path = "crates/gemini-model" }
-claide-vector-db = { version = "0.1.0", path = "crates/claide-vector-db" }
-linkify = "0.10"
-mime = "0.3"
-reqwest = { version = "0.12", default-features = false, features = [
-    "brotli",
-    "gzip",
-    "http2",
-    "json",
-    "rustls-tls",
-] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = "1.42"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-url = "2.5"
-
-[workspace.lints.clippy]
-alloc_instead_of_core = "deny"
-std_instead_of_alloc = "deny"
-std_instead_of_core = "deny"
+[profile.dev.package."*"]
+opt-level = 3
