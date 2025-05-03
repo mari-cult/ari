@@ -94,6 +94,10 @@ impl SessionBatch {
         unsafe { sys::bindings_session_batch_tokens_len(self.batch_ptr.as_ptr()) as usize }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn push(&mut self, token: i32, logit: bool) {
         tracing::debug!("push {token} (index={}, len={})", self.index, self.len());
 
