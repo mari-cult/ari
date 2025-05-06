@@ -1,21 +1,27 @@
-use base64::Engine;
-use base64::engine::general_purpose;
+use self::gemini::googleapis::google::ai::generativelanguage::v1beta::part::Data;
+use self::gemini::googleapis::google::ai::generativelanguage::v1beta::{Content, Part};
+use gemini::googleapis::google::ai::generativelanguage::v1beta::{
+    Blob, FunctionDeclaration, GenerateContentRequest, Schema, Tool, Type,
+};
 use image::ImageFormat;
+use prost_types::value::Kind;
 use reqwest::{Client, ClientBuilder};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::{fs, time};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use twilight_cache_inmemory::DefaultInMemoryCache;
 use twilight_gateway::{ConfigBuilder, Event, EventTypeFlags, Intents, Shard, ShardId, StreamExt};
 use twilight_http::Client as Rest;
 use twilight_model::gateway::payload::outgoing::update_presence::UpdatePresencePayload;
 use twilight_model::gateway::presence::{Activity, ActivityType, MinimalActivity, Status};
 use twilight_model::id::Id;
+
+pub mod gemini;
 
 #[derive(Clone, Debug, Deserialize)]
 struct DiscordOptions {
@@ -38,83 +44,6 @@ struct State {
     rest: Rest,
     cache: DefaultInMemoryCache,
     client: Client,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GeminiResponse {
-    pub candidates: Vec<Candidate>,
-    pub model_version: String,
-    pub usage_metadata: UsageMetadata,
-    pub error: Option<ErrorResponse>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Candidate {
-    pub avg_logprobs: Option<f64>,
-    pub content: Content,
-    pub finish_reason: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Content {
-    pub parts: Vec<Part>,
-    pub role: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Part {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub function_call: Option<FunctionCall>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FunctionCall {
-    pub args: serde_json::Value,
-    pub name: String,
-}
-
-// Removed the old Args struct as we are using Value
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageMetadata {
-    pub candidates_token_count: u32,
-    #[serde(default)]
-    pub candidates_tokens_details: Vec<TokenDetails>,
-    pub prompt_token_count: u32,
-    #[serde(default)]
-    pub prompt_tokens_details: Vec<TokenDetails>,
-    pub total_token_count: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TokenDetails {
-    pub modality: String,
-    pub token_count: u32,
-}
-
-// --- New structs for handling the error response ---
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ErrorResponse {
-    pub error: ErrorDetail,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ErrorDetail {
-    pub code: u16, // Use u16 for HTTP status codes
-    pub message: String,
-    pub status: String,
 }
 
 #[tokio::main]
@@ -140,9 +69,7 @@ async fn main() -> anyhow::Result<()> {
 
         image.write_to(&mut buf, ImageFormat::Jpeg)?;
 
-        let buf = buf.into_inner();
-
-        general_purpose::URL_SAFE.encode(&buf)
+        buf.into_inner()
     } else {
         warn!("failed to capture screen");
 
@@ -226,148 +153,147 @@ async fn run(state: Arc<State>, event: Event) -> anyhow::Result<()> {
 
                 image.write_to(&mut buf, ImageFormat::Jpeg)?;
 
-                let buf = buf.into_inner();
-
-                general_purpose::URL_SAFE.encode(&buf)
+                buf.into_inner()
             } else {
                 warn!("failed to capture screen");
 
                 return Err(anyhow::anyhow!("failed to capture screen"));
             };
 
-            let system = "ur ari, 22, egirl\n\
-            ur on ur pc rn, chatting on discord\n\
-            talk concisely, few words, lowercase, as if ur typing on ur keyboard, yk.";
-
-            let prompt = "always describe the chat u see on ur pc, pay attention to the order and context of messages, replies, attachments, and users in the chat. \
-            then carefully respond to users using the send_message function. \
-            avoid repeating previously said messages.";
-
-            let request = json!({
-                "contents": [
-                    {
-                        "parts": [
-                            {
-                                "text": prompt,
-                            },
-                            {
-                                "inline_data": {
-                                    "mime_type": "image/jpeg",
-                                    "data": image,
-                                }
-                            }
-                        ]
-                    }
-                ],
-                /*"generationConfig": {
-                    "responseModalities": ["IMAGE", "TEXT"],
-                },*/
-                "system_instruction": {
-                    "parts": [
-                        {
-                            "text": system,
-                        }
-                    ]
-                },
-                "tools": [
-                    //{ "code_execution": {} },
-                    {
-                        "functionDeclarations": [
-                            {
-                                "name": "send_message",
-                                "description": "Send a Discord message in the channel you are looking at",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "content": {
-                                            "type": "string",
-                                            "description": "The message contents"
-                                        }
-                                    },
-                                    "required": ["content"]
-                                }
-                            }
-                        ]
-                    }
-                ]
-            });
-
-            // info!(
-            //     "gemini api request: {}",
-            //     serde_json::to_string_pretty(&request)?
-            // );
-
-            //let model = "gemini-2.5-flash-preview-04-17";
-            // most stable model
             let model = "gemini-2.0-flash";
-            let mut result = Vec::new();
 
-            for attempt in 0..5 {
-                info!("send gemini request");
+            info!("connect to endpoint");
 
-                let response: serde_json::Value = state.client.post(format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={}", state.api_key))
-                    .json(&request)
-                    .send()
-                    .await?
-                    .json()
-                    .await?;
+            let mut gemini = gemini::Gemini::connect(state.api_key.clone()).await?;
 
-                let response = serde_json::to_string_pretty(&response)?;
+            let system_instruction = [
+                "ur ari, 22, egirl",
+                "ur on ur pc rn, chattin on discord",
+                "talk concisely, preferably of few words, lowercase, since ur typing on ur keyboard",
+                "talk more or less depending on the topic",
+            ]
+            .join(".\n")
+                + ".";
 
-                info!("gemini api response: {response}");
+            let prompt = [
+                "always describe the chat u see on ur pc, pay attention to the order and context of messages, replies, attachments, and users in the chat",
+                "then carefully respond to users using the send_message function",
+                "avoid repeating previously said messages",
+            ].join(".\n") + ".";
 
-                match serde_json::from_str(&response) {
-                    Ok(GeminiResponse {
-                        error: Some(error), ..
-                    }) if error.error.code == 503 => {
-                        warn!("gemini api unavailable (attempt {attempt} of 5)");
+            info!("generate content");
 
-                        time::sleep(Duration::from_secs(attempt)).await;
-                    }
-                    Ok(GeminiResponse {
-                        error: Some(error), ..
-                    }) => {
-                        warn!(
-                            "gemini api error: {:#?}",
-                            serde_json::to_string_pretty(&error.error)?
-                        );
+            let result = gemini
+                .generate_content(GenerateContentRequest {
+                    model: format!("models/{model}"),
+                    system_instruction: Some(Content {
+                        parts: vec![Part {
+                            data: Some(Data::Text(system_instruction)),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }),
+                    tools: vec![Tool {
+                        function_declarations: vec![FunctionDeclaration {
+                            name: String::from("send_message"),
+                            description: String::from("Send a Discord message"),
+                            parameters: Some({
+                                let mut schema = Schema {
+                                    properties: HashMap::from_iter(vec![(
+                                        String::from("message"),
+                                        {
+                                            let mut schema = Schema {
+                                                ..Default::default()
+                                            };
 
-                        return Err(anyhow::anyhow!("fatal gemini api error"));
-                    }
-                    Ok(GeminiResponse { candidates, .. }) => {
-                        result = candidates;
+                                            schema.set_type(Type::String);
+                                            schema
+                                        },
+                                    )]),
+                                    required: vec![String::from("message")],
+                                    ..Default::default()
+                                };
 
-                        break;
-                    }
-                    Err(error) => {
-                        warn!("gemini api deserialization error: {error}");
+                                schema.set_type(Type::Object);
+                                schema
+                            }),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }],
+                    contents: vec![Content {
+                        parts: vec![
+                            Part {
+                                data: Some(Data::InlineData(Blob {
+                                    mime_type: String::from("image/jpeg"),
+                                    data: image,
+                                })),
+                                ..Default::default()
+                            },
+                            Part {
+                                data: Some(Data::Text(prompt)),
+                                ..Default::default()
+                            },
+                        ],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+                .await;
 
-                        return Err(error.into());
-                    }
+            let response = match result {
+                Ok(response) => response,
+                Err(error) => {
+                    error!("gemini api response: {error}");
+
+                    return Err(error);
                 }
-            }
-
-            let Some(candidate) = result.first() else {
-                return Err(anyhow::anyhow!("gemini api unavilable"));
             };
 
-            for part in &candidate.content.parts {
-                let Some(function_call) = &part.function_call else {
-                    continue;
-                };
+            info!("gemini api response: {response:#?}");
 
-                if &*function_call.name == "send_message" {
-                    let content = function_call.args["content"].as_str().unwrap();
+            let candidate = response
+                .candidates
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("no candidates"))?;
 
-                    if content.is_empty() {
-                        continue;
+            println!("finish_reason = {:?}", candidate.finish_reason());
+
+            let content = candidate
+                .content
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no content"))?;
+
+            for part in content.parts.iter() {
+                match part {
+                    Part {
+                        thought: false,
+                        data: Some(Data::FunctionCall(function_call)),
+                    } => {
+                        if &*function_call.name == "send_message" {
+                            let Kind::StringValue(content) = function_call
+                                .args
+                                .as_ref()
+                                .unwrap()
+                                .fields
+                                .get("message")
+                                .unwrap()
+                                .kind
+                                .as_ref()
+                                .unwrap()
+                            else {
+                                panic!()
+                            };
+
+                            state
+                                .rest
+                                .create_message(Id::new(1325549216432394304))
+                                .content(content)
+                                .await?;
+                        }
                     }
-
-                    state
-                        .rest
-                        .create_message(Id::new(1325549216432394304))
-                        .content(content)
-                        .await?;
+                    // may add more
+                    _ => {}
                 }
             }
         }
