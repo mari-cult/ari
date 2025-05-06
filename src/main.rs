@@ -8,9 +8,10 @@ use prost_types::value::Kind;
 use reqwest::{Client, ClientBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io;
+use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{io, mem};
 use tokio::process::Command;
 use tokio::{fs, time};
 use tracing::{error, info, warn};
@@ -31,6 +32,8 @@ struct DiscordOptions {
 #[derive(Clone, Debug, Deserialize)]
 struct GeminiOptions {
     api_key: String,
+    system_instructions: String,
+    action_prompt: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -40,7 +43,7 @@ struct Options {
 }
 
 struct State {
-    api_key: String,
+    options: Options,
     rest: Rest,
     cache: DefaultInMemoryCache,
     client: Client,
@@ -52,9 +55,6 @@ async fn main() -> anyhow::Result<()> {
 
     let text = fs::read_to_string("options.toml").await?;
     let options: Options = toml::from_str(&text)?;
-
-    let token = options.discord.token;
-    let api_key = options.gemini.api_key;
 
     let output = Command::new("grim")
         .arg("-t")
@@ -86,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
 
     let presence = UpdatePresencePayload::new(vec![activity], false, None, Status::Invisible)?;
 
-    let config = ConfigBuilder::new(token.clone(), intents)
+    let config = ConfigBuilder::new(options.discord.token.clone(), intents)
         .presence(presence)
         .build();
 
@@ -99,8 +99,8 @@ async fn main() -> anyhow::Result<()> {
     let client = ClientBuilder::new().user_agent("ari/0.6.0").build()?;
 
     let state = Arc::new(State {
-        api_key,
-        rest: Rest::new(token),
+        rest: Rest::new(options.discord.token.clone()),
+        options,
         cache,
         client,
     });
@@ -130,6 +130,7 @@ async fn run(state: Arc<State>, event: Event) -> anyhow::Result<()> {
     match event {
         Event::MessageCreate(message)
             if message.author.id != self_id
+                && message.channel_id == Id::new(1325549216432394304)
                 && (message.mentions.iter().any(|mention| mention.id == self_id)
                     || message
                         .referenced_message
@@ -164,22 +165,7 @@ async fn run(state: Arc<State>, event: Event) -> anyhow::Result<()> {
 
             info!("connect to endpoint");
 
-            let mut gemini = gemini::Gemini::connect(state.api_key.clone()).await?;
-
-            let system_instruction = [
-                "ur ari, 22, egirl",
-                "ur on ur pc rn, chattin on discord",
-                "talk concisely, preferably of few words, lowercase, since ur typing on ur keyboard",
-                "talk more or less depending on the topic",
-            ]
-            .join(".\n")
-                + ".";
-
-            let prompt = [
-                "always describe the chat u see on ur pc, pay attention to the order and context of messages, replies, attachments, and users in the chat",
-                "then carefully respond to users using the send_message function",
-                "avoid repeating previously said messages",
-            ].join(".\n") + ".";
+            let mut gemini = gemini::Gemini::connect(state.options.gemini.api_key.clone()).await?;
 
             info!("generate content");
 
@@ -188,7 +174,9 @@ async fn run(state: Arc<State>, event: Event) -> anyhow::Result<()> {
                     model: format!("models/{model}"),
                     system_instruction: Some(Content {
                         parts: vec![Part {
-                            data: Some(Data::Text(system_instruction)),
+                            data: Some(Data::Text(
+                                state.options.gemini.system_instructions.clone(),
+                            )),
                             ..Default::default()
                         }],
                         ..Default::default()
@@ -231,7 +219,7 @@ async fn run(state: Arc<State>, event: Event) -> anyhow::Result<()> {
                                 ..Default::default()
                             },
                             Part {
-                                data: Some(Data::Text(prompt)),
+                                data: Some(Data::Text(state.options.gemini.action_prompt.clone())),
                                 ..Default::default()
                             },
                         ],
@@ -264,8 +252,16 @@ async fn run(state: Arc<State>, event: Event) -> anyhow::Result<()> {
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("no content"))?;
 
+            let mut thoughts = String::new();
+
             for part in content.parts.iter() {
                 match part {
+                    Part {
+                        thought: false,
+                        data: Some(Data::Text(thought)),
+                    } => {
+                        thoughts += thought;
+                    }
                     Part {
                         thought: false,
                         data: Some(Data::FunctionCall(function_call)),
@@ -285,10 +281,34 @@ async fn run(state: Arc<State>, event: Event) -> anyhow::Result<()> {
                                 panic!()
                             };
 
+                            let thoughts = mem::take(&mut thoughts);
+                            let thoughts = thoughts.trim();
+                            let content = content.trim();
+
+                            let content = if thoughts.is_empty() {
+                                String::from(content)
+                            } else {
+                                let mut message =
+                                    String::with_capacity(thoughts.len() + content.len());
+
+                                for line in thoughts.lines() {
+                                    let line = line.trim();
+
+                                    if line.is_empty() {
+                                        writeln!(&mut message)?;
+                                    } else {
+                                        writeln!(&mut message, "-# {line}")?;
+                                    }
+                                }
+
+                                message.push_str(content);
+                                message
+                            };
+
                             state
                                 .rest
-                                .create_message(Id::new(1325549216432394304))
-                                .content(content)
+                                .create_message(message.channel_id)
+                                .content(&content)
                                 .await?;
                         }
                     }
