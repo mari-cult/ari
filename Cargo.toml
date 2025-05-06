@@ -5,15 +5,16 @@ edition = "2024"
 
 [dependencies]
 anyhow = { version = "1.0.98", default-features = false, features = ["std"] }
-base64 = { version = "0.22.1", default-features = false, features = ["std"] }
 futures-util = { version = "0.3.31", default-features = false, features = ["std", "sink"] }
 image = { version = "0.25.6", default-features = false, features = ["avif", "bmp", "gif", "jpeg", "png", "pnm", "qoi", "tga", "tiff", "webp"] }
+prost = { version = "0.13.5", default-features = false, features = ["derive", "std"] }
+prost-types = { version = "0.13.5", default-features = false, features = ["std"] }
 reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls-webpki-roots", "gzip", "brotli", "zstd", "deflate", "stream", "cookies", "json"] }
 serde = { version = "1.0.219", default-features = false, features = ["derive", "std"] }
-serde_json = { version = "1.0.140", default-features = false, features = ["std"] }
 tokio = { version = "1.44.2", default-features = false, features = ["fs", "macros", "process", "rt-multi-thread", "time"] }
 tokio-websockets = { version = "0.11.4", default-features = false, features = ["aws_lc_rs", "client", "getrandom", "rustls-webpki-roots", "simd"] }
 toml = { version = "0.8.22", default-features = false, features = ["display", "parse"] }
+tonic = { version = "0.13.1", default-features = false, features = ["codegen", "channel", "prost", "tls-webpki-roots", "tls-ring", "zstd", "gzip", "deflate"] }
 tracing = { version = "0.1.41", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.19", default-features = false, features = ["ansi", "env-filter"] }
 twilight-cache-inmemory = { version = "0.16.0", default-features = false, features = ["permission-calculator"] }
@@ -26,3 +27,6 @@ opt-level = 2
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[build-dependencies]
+tonic-build = { version = "0.13.1", default-features = false, features = ["cleanup-markdown", "prost", "transport"] }
