@@ -11,7 +11,9 @@ prost = { version = "0.13.5", default-features = false, features = ["derive", "s
 prost-types = { version = "0.13.5", default-features = false, features = ["std"] }
 reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls-webpki-roots", "gzip", "brotli", "zstd", "deflate", "stream", "cookies", "json"] }
 serde = { version = "1.0.219", default-features = false, features = ["derive", "std"] }
+time = { version = "0.3.41", default-features = false, features = ["formatting", "local-offset", "macros", "parsing", "std"] }
 tokio = { version = "1.44.2", default-features = false, features = ["fs", "macros", "process", "rt-multi-thread", "time"] }
+tokio-stream = { version = "0.1.17", default-features = false }
 tokio-websockets = { version = "0.11.4", default-features = false, features = ["aws_lc_rs", "client", "getrandom", "rustls-webpki-roots", "simd"] }
 toml = { version = "0.8.22", default-features = false, features = ["display", "parse"] }
 tonic = { version = "0.13.1", default-features = false, features = ["codegen", "channel", "prost", "tls-webpki-roots", "tls-ring", "zstd", "gzip", "deflate"] }
